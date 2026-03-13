@@ -20,11 +20,12 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
   - label(s)
   - type (`Album`, `Single`, `EP`)
   - Apple artist link (+ album page when available)
-- TXT/CSV upload for batch label import
-- CSV export of current label list (future re-upload compatible)
+- TXT/CSV upload for batch label import (line-based, supports comment lines starting with `#`)
+- Export of current label list as `.txt` in import-compatible format (includes comment header)
 - Local persistence via `localStorage`
 - Responsive UI for desktop/tablet/mobile
-- High-res Apple cover URLs (auto-upgrades legacy cached cover URLs)
+- High-res Apple cover URLs
+- On-page instruction section explaining workflow and import format
 
 ## Tech Stack
 
@@ -120,6 +121,10 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 
 ### 2026-03-13
 
-- Added CSV export for the current label list (`Export CSV`) with re-upload compatible format.
+- Added export for the current label list (`Export List`) with re-upload compatible format.
 - Upgraded cover handling to high-res Apple artwork URLs (`1200x1200bb.jpg`).
 - Fixed form control overflow so dropdowns stay within their grid container.
+- Import now supports comments (`#...`) and ignores leading/trailing whitespace in label rows.
+- Export writes the same structure with a comment header line and plain text label rows.
+- Import/export format is a plain text list (quotes optional, not required).
+- Added an in-app instruction panel with usage steps and import file example.

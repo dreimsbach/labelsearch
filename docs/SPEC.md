@@ -39,6 +39,7 @@ Behavior:
 - Empty state when no releases found
 - Error state for API/provider failures
 - Progress display for list search/import (`x / n`)
+- Visible instruction section explaining search workflow and import format
 - Keyboard-accessible form fields and actionable elements
 - Visible focus styles and sufficient color contrast
 
@@ -53,7 +54,10 @@ Behavior:
 - Remove individual labels by clicking chip
 - Clear entire label list
 - Upload label list from `TXT/CSV`
-- Export current label list as `CSV` for later re-import
+- Export current label list as text file (`.txt`) for later re-import
+- Import format is line-based text and supports comment lines (prefix `#`)
+- Label rows are plain lines (no quotes required), leading/trailing whitespace is ignored
+- Export format follows the same line-based structure and includes a comment header line
 
 ## 3.2 Search Configuration
 
@@ -314,6 +318,9 @@ Required checks:
 
 ### 2026-03-13
 
-- Added label list CSV export requirement (compatible with TXT/CSV import flow).
+- Added label list export requirement (compatible with TXT/CSV import flow).
 - Added high-res cover normalization rule for iTunes artwork URLs (`1200x1200bb.jpg`).
 - Added UI layout fix requirement for control overflow in the filter grid.
+- Added comment support for import (`#...`) and aligned export structure with comment-capable format.
+- Simplified import/export label format to plain text lines without required quotes; trim whitespace on import and export `.txt`.
+- Added an in-app instruction section with workflow steps and import file example.

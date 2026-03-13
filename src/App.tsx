@@ -59,21 +59,20 @@ export function App(): JSX.Element {
 
   const canSearch = labels.length > 0 && !loading;
 
-  function exportLabelsCsv(): void {
+  function exportLabelsList(): void {
     if (labels.length === 0) {
       return;
     }
 
-    const csv = labels
-      .map((label) => `"${label.name.replace(/"/g, '""')}"`)
-      .join('\n');
+    const day = new Date().toISOString().slice(0, 10);
+    const list = labels.map((label) => label.name.trim()).join('\n');
+    const content = [`#Labels export ${day}`, list].join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
-    const day = new Date().toISOString().slice(0, 10);
     anchor.href = url;
-    anchor.download = `labels-${day}.csv`;
+    anchor.download = `labels-${day}.txt`;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
@@ -234,6 +233,23 @@ export function App(): JSX.Element {
 
       <main className="layout">
         <section className="panel controls" aria-label="Search controls">
+          <section className="instructions" aria-label="Instructions">
+            <h2>How it works</h2>
+            <ol>
+              <li>Search a label and add it to your list, or upload a label file.</li>
+              <li>Set days back, country, and source mode.</li>
+              <li>Run direct search or search all labels from your list.</li>
+            </ol>
+            <h3>Import file format</h3>
+            <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
+            <pre>
+{`#Rock Music
+Run for Cover Records
+Smallville
+Subpop`}
+            </pre>
+          </section>
+
           <div className="input-row">
             <label htmlFor="label-query">Label</label>
             <input
@@ -326,8 +342,8 @@ export function App(): JSX.Element {
             <button className="btn danger" type="button" onClick={() => setLabels([])} disabled={loading || labels.length === 0}>
               Clear all
             </button>
-            <button className="btn secondary" type="button" onClick={exportLabelsCsv} disabled={labels.length === 0}>
-              Export CSV
+            <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
+              Export List
             </button>
           </div>
 

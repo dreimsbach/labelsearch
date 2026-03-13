@@ -72,6 +72,48 @@ select {
   align-self: start;
 }
 
+.instructions {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f2f6ef;
+}
+
+.instructions h2,
+.instructions h3 {
+  margin: 0 0 8px;
+}
+
+.instructions h2 {
+  font-size: 1.05rem;
+}
+
+.instructions h3 {
+  font-size: 0.95rem;
+  margin-top: 10px;
+}
+
+.instructions ol,
+.instructions p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.instructions ol {
+  padding-left: 18px;
+}
+
+.instructions pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #182521;
+  color: #dff6eb;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
 .input-row {
   display: flex;
   flex-direction: column;
