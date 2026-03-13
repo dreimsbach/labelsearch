@@ -24,7 +24,7 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
 - Export of current label list as `.txt` in import-compatible format (includes comment header)
 - Local persistence via `localStorage`
 - Responsive UI for desktop/tablet/mobile
-- High-res Apple cover URLs
+- Cover Art Archive (MusicBrainz) preferred for covers (original image), with high-res iTunes fallback
 - On-page instruction section explaining workflow and import format
 
 ## Tech Stack
@@ -116,6 +116,8 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - MusicBrainz requests are throttled (~1 req/s).
 - iTunes matching uses a deterministic score threshold for confidence.
 - If enrichment fails, MusicBrainz release entries are still shown.
+- Cover selection in `hybrid/musicbrainz` prefers Cover Art Archive by MB release ID to reduce incorrect iTunes artwork matches.
+- Cover rendering normalizes Apple artwork URLs at runtime to a high-resolution variant.
 
 ## Changelog
 
@@ -128,3 +130,6 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Export writes the same structure with a comment header line and plain text label rows.
 - Import/export format is a plain text list (quotes optional, not required).
 - Added an in-app instruction panel with usage steps and import file example.
+- Improved cover quality/accuracy by preferring Cover Art Archive original images with iTunes fallback.
+- Set iTunes fallback artwork target size to `1200x1200bb.jpg`.
+- Added runtime cover URL normalization in the card renderer to avoid stale `100x100` display links.

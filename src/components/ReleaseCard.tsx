@@ -4,13 +4,23 @@ interface Props {
   release: Release;
 }
 
+function normalizeCoverUrl(url?: string): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  return url.replace(/\/\d+x\d+bb(?:-\d+)?\.jpg(?:\?.*)?$/i, '/1200x1200bb.jpg');
+}
+
 export function ReleaseCard({ release }: Props): JSX.Element {
+  const imageUrl = normalizeCoverUrl(release.coverUrl);
+
   return (
     <article className="release-card">
       <div className="cover-wrap">
-        {release.coverUrl ? (
+        {imageUrl ? (
           <img
-            src={release.coverUrl}
+            src={imageUrl}
             alt={`${release.title} cover`}
             className="cover"
             loading="lazy"

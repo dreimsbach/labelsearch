@@ -11,12 +11,64 @@ interface SearchResult {
   partialFailures: LabelFailure[];
 }
 
+interface CoverArtArchivePayload {
+  images?: Array<{
+    front?: boolean;
+    image?: string;
+    thumbnails?: {
+      large?: string;
+      [key: string]: string | undefined;
+    };
+  }>;
+}
+
+const coverArtCache = new Map<string, Promise<string | undefined>>();
+
 function toHighResArtwork(url?: string): string | undefined {
   if (!url) {
     return undefined;
   }
 
-  return url.replace(/\/\d+x\d+bb\.jpg$/i, '/1200x1200bb.jpg');
+  return url.replace(/\/\d+x\d+bb(?:-\d+)?\.jpg$/i, '/1200x1200bb.jpg');
+}
+
+async function findCoverArtUrl(mbReleaseId?: string): Promise<string | undefined> {
+  if (!mbReleaseId) {
+    return undefined;
+  }
+
+  const cached = coverArtCache.get(mbReleaseId);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = (async (): Promise<string | undefined> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+
+    try {
+      const response = await fetch(`https://coverartarchive.org/release/${mbReleaseId}`, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        return undefined;
+      }
+
+      const payload = (await response.json()) as CoverArtArchivePayload;
+      const front = payload.images?.find((image) => image.front) ?? payload.images?.[0];
+      // Prefer the original CAA image (usually highest quality), then fallback to thumbnails.
+      return front?.image ?? front?.thumbnails?.large ?? front?.thumbnails?.['500'];
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+
+  coverArtCache.set(mbReleaseId, promise);
+  return promise;
 }
 
 function releaseArtist(release: MbRelease): string {
@@ -46,20 +98,26 @@ function mapBaseRelease(release: MbRelease, label: LabelRef, mode: SearchRequest
   };
 }
 
-async function enrichWithItunes(release: Release, country: string, mbRelease: MbRelease): Promise<Release> {
+async function enrichWithItunes(
+  release: Release,
+  country: string,
+  mbRelease: MbRelease,
+  mbCoverUrl?: string
+): Promise<Release> {
   const candidates = await findItunesCandidates(release.artist, release.title, country);
   const matched = pickBestItunesMatch(release.artist, release.title, release.releaseDate, candidates);
 
   if (!matched) {
     return {
       ...release,
+      coverUrl: mbCoverUrl ?? release.coverUrl,
       genres: resolveGenres(undefined, mbRelease.genres?.map((entry) => entry.name) ?? [], mbRelease.tags?.map((entry) => entry.name) ?? [])
     };
   }
 
   return {
     ...release,
-    coverUrl: toHighResArtwork(matched.artworkUrl100),
+    coverUrl: mbCoverUrl ?? toHighResArtwork(matched.artworkUrl100),
     appleArtistUrl: matched.artistViewUrl,
     appleAlbumUrl: matched.collectionViewUrl,
     type: mapReleaseType(
@@ -109,9 +167,13 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
 
       for (const mbRelease of mbReleases) {
         let mapped = mapBaseRelease(mbRelease, label, input.sourceMode);
+        const mbCoverUrl = await findCoverArtUrl(mbRelease.id);
+        if (mbCoverUrl) {
+          mapped.coverUrl = mbCoverUrl;
+        }
 
         if (input.sourceMode === 'hybrid') {
-          mapped = await enrichWithItunes(mapped, input.country, mbRelease);
+          mapped = await enrichWithItunes(mapped, input.country, mbRelease, mbCoverUrl);
         } else if (input.sourceMode === 'musicbrainz') {
           mapped.genres = resolveGenres(
             undefined,

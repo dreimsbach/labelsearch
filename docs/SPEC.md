@@ -123,6 +123,18 @@ Used for:
 - Optional type signal (`collectionType`)
 - Cover URL is normalized to high-res format (`1200x1200bb.jpg`) when available
 
+## 4.4 Cover Art Archive (MusicBrainz)
+
+Used for:
+
+- Preferred cover source in `hybrid` and `musicbrainz` modes (via release MBID)
+
+Rule:
+
+- If Cover Art Archive has a front image, use the original `image` URL first.
+- If not available, fallback to iTunes artwork (when available).
+- At render time, Apple artwork URLs are normalized to a high-resolution variant to avoid stale low-res display links.
+
 ## 5. Matching, Mapping, and Dedupe Rules
 
 ## 5.1 iTunes Match Scoring
@@ -324,3 +336,6 @@ Required checks:
 - Added comment support for import (`#...`) and aligned export structure with comment-capable format.
 - Simplified import/export label format to plain text lines without required quotes; trim whitespace on import and export `.txt`.
 - Added an in-app instruction section with workflow steps and import file example.
+- Updated cover strategy: prefer Cover Art Archive artwork (MB release ID), fallback to high-res iTunes.
+- Refined cover strategy: prefer original CAA image and use `1200x1200bb.jpg` for iTunes fallback artwork.
+- Added runtime cover URL normalization to prevent old cached `100x100` Apple image links from rendering low-res covers.
