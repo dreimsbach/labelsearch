@@ -45,15 +45,29 @@ app.post('/api/releases/search', async (req, res) => {
     return;
   }
 
-  if (!input.daysBack || input.daysBack < 1 || input.daysBack > 365) {
-    res.status(400).json({ error: 'daysBack must be between 1 and 365' });
+  const mode = input.timeMode ?? 'days';
+  const value = Number(input.timeValue);
+
+  if (mode !== 'days' && mode !== 'year') {
+    res.status(400).json({ error: 'timeMode must be days or year' });
+    return;
+  }
+
+  if (mode === 'days' && (!value || value < 1 || value > 3650)) {
+    res.status(400).json({ error: 'timeValue for days must be between 1 and 3650' });
+    return;
+  }
+
+  if (mode === 'year' && (!value || value < 1900 || value > 2100)) {
+    res.status(400).json({ error: 'timeValue for year must be between 1900 and 2100' });
     return;
   }
 
   try {
     const result = await findReleases({
       labels: input.labels,
-      daysBack: input.daysBack,
+      timeMode: mode,
+      timeValue: value,
       country: (input.country || 'DE').toUpperCase(),
       sourceMode: input.sourceMode ?? 'hybrid',
       timezone: input.timezone || 'Europe/Berlin'
@@ -63,6 +77,8 @@ app.post('/api/releases/search', async (req, res) => {
       releases: result.releases,
       meta: {
         sourceMode: input.sourceMode ?? 'hybrid',
+        timeMode: mode,
+        timeValue: value,
         country: (input.country || 'DE').toUpperCase(),
         fromDate: result.fromDate,
         toDate: result.toDate,

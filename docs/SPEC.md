@@ -7,7 +7,7 @@ Label Release Tracker is a web app to discover recent releases for selected reco
 Core behavior:
 
 1. Find/select labels from MusicBrainz and store them with MBID.
-2. Search releases for a configurable date window (`daysBack`, default `7`, includes today).
+2. Search releases for a configurable date window with mode selector (`Days` default `7`, or `Year`).
 3. Enrich results with iTunes metadata where available.
 4. Present releases in a modern, responsive, card-based overview.
 
@@ -67,7 +67,10 @@ Behavior:
 
 Fields:
 
-- `daysBack` (number, `1..365`, default `7`)
+- `rangeValue` (number)
+- `rangeMode` selector:
+  - `days` (default): searches last `rangeValue` days including today
+  - `year`: searches full calendar year `rangeValue` (e.g. `2026`)
 - `country` dropdown (default `DE`)
 - `sourceMode` dropdown:
   - `hybrid` (default)
@@ -76,9 +79,13 @@ Fields:
 
 Date window rule:
 
-- `toDate = today` in user timezone
-- `fromDate = today - (daysBack - 1)`
-- inclusive range: `[fromDate, toDate]`
+- For `days` mode:
+  - `toDate = today` in user timezone
+  - `fromDate = today - (rangeValue - 1)`
+  - inclusive range: `[fromDate, toDate]`
+- For `year` mode:
+  - `fromDate = YYYY-01-01`
+  - `toDate = YYYY-12-31`
 
 ## 3.3 Result Fields
 
@@ -239,7 +246,8 @@ Request body:
 ```json
 {
   "labels": [{ "mbid": "...", "name": "Morr Music" }],
-  "daysBack": 7,
+  "timeMode": "days",
+  "timeValue": 7,
   "country": "DE",
   "sourceMode": "hybrid",
   "timezone": "Europe/Berlin"
@@ -274,6 +282,8 @@ Response body:
   ],
   "meta": {
     "sourceMode": "hybrid",
+    "timeMode": "days",
+    "timeValue": 7,
     "country": "DE",
     "fromDate": "2026-03-07",
     "toDate": "2026-03-13",
@@ -345,3 +355,8 @@ Required checks:
 - Added runtime cover URL normalization to prevent old cached `100x100` Apple image links from rendering low-res covers.
 - Refined controls layout: instruction panel is collapsible and action buttons are grouped by priority.
 - Updated direct-search behavior to use selected lookup candidate when present; otherwise first result.
+- Added time range selector with `Days` and `Year` modes (default `7 Days`) and corresponding backend range logic.
+- Fixed range selector control layout to prevent overlap in compact widths.
+- Updated responsive control layout for medium widths: two-column filter grid with full-width source selector row.
+- Updated medium-width control placement to explicit 2x2 arrangement: `[empty][Range]` and `[Country][Source]`.
+- Fixed remaining overlap by standardizing filter controls to a two-column grid (except one-column mobile layout).

@@ -1,4 +1,4 @@
-import type { LabelRef, LabelSearchResult, Release, SearchResponse, SourceMode } from '../../shared/types';
+import type { LabelRef, LabelSearchResult, Release, SearchResponse, SourceMode, TimeMode } from '../../shared/types';
 
 export async function searchLabels(query: string): Promise<LabelSearchResult[]> {
   const response = await fetch(`/api/labels/search?q=${encodeURIComponent(query)}&limit=10`);
@@ -12,7 +12,8 @@ export async function searchLabels(query: string): Promise<LabelSearchResult[]> 
 
 export async function searchReleasesForLabels(
   labels: LabelRef[],
-  daysBack: number,
+  timeMode: TimeMode,
+  timeValue: number,
   country: string,
   sourceMode: SourceMode,
   timezone: string
@@ -24,7 +25,8 @@ export async function searchReleasesForLabels(
     },
     body: JSON.stringify({
       labels,
-      daysBack,
+      timeMode,
+      timeValue,
       country,
       sourceMode,
       timezone
@@ -33,6 +35,9 @@ export async function searchReleasesForLabels(
 
   if (!response.ok) {
     const payload = (await response.json()) as { error?: string };
+    if (payload.error?.includes('daysBack')) {
+      throw new Error('Backend appears outdated (daysBack API). Please restart dev server so frontend and backend use the same version.');
+    }
     throw new Error(payload.error ?? 'Search failed');
   }
 

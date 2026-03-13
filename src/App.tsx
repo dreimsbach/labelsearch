@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { LabelRef, LabelSearchResult, Release, SourceMode } from '../shared/types';
+import type { LabelRef, LabelSearchResult, Release, SourceMode, TimeMode } from '../shared/types';
 import { LabelChip } from './components/LabelChip';
 import { ReleaseCard } from './components/ReleaseCard';
 import { ReleaseSkeleton } from './components/ReleaseSkeleton';
@@ -32,7 +32,8 @@ export function App(): JSX.Element {
   const [releases, setReleases] = useState<Release[]>(() => loadResults());
 
   const initial = loadSettings();
-  const [daysBack, setDaysBack] = useState(initial.daysBack);
+  const [timeMode, setTimeMode] = useState<TimeMode>(initial.timeMode);
+  const [timeValue, setTimeValue] = useState(initial.timeValue);
   const [country, setCountry] = useState(initial.country);
   const [sourceMode, setSourceMode] = useState<SourceMode>(initial.sourceMode);
 
@@ -54,8 +55,8 @@ export function App(): JSX.Element {
   }, [releases]);
 
   useEffect(() => {
-    saveSettings({ daysBack, country, sourceMode });
-  }, [daysBack, country, sourceMode]);
+    saveSettings({ timeMode, timeValue, country, sourceMode });
+  }, [timeMode, timeValue, country, sourceMode]);
 
   const canSearch = labels.length > 0 && !loading;
 
@@ -184,7 +185,14 @@ export function App(): JSX.Element {
       for (let i = 0; i < targetLabels.length; i += 1) {
         const label = targetLabels[i];
         try {
-          const response = await searchReleasesForLabels([label], daysBack, country, sourceMode, Intl.DateTimeFormat().resolvedOptions().timeZone);
+          const response = await searchReleasesForLabels(
+            [label],
+            timeMode,
+            timeValue,
+            country,
+            sourceMode,
+            Intl.DateTimeFormat().resolvedOptions().timeZone
+          );
           combined.push(...response.releases);
           response.meta.partialFailures.forEach((entry) => failures.push(`${entry.label.name}: ${entry.message}`));
         } catch (searchError) {
@@ -243,7 +251,7 @@ export function App(): JSX.Element {
             <summary>Instructions & import format</summary>
             <ol>
               <li>Search a label and add it to your list, or upload a label file.</li>
-              <li>Set days back, country, and source mode.</li>
+              <li>Set range value + mode (Days or Year), country, and source mode.</li>
               <li>Use direct search or search all labels from your list.</li>
             </ol>
             <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
@@ -270,15 +278,42 @@ Subpop`}
 
           <div className="input-row grid-row">
             <div>
-              <label htmlFor="days-back">Days back</label>
+              <label htmlFor="time-value" className="label-placeholder">
+                Value
+              </label>
               <input
-                id="days-back"
+                id="time-value"
                 type="number"
-                min={1}
-                max={365}
-                value={daysBack}
-                onChange={(event) => setDaysBack(Number(event.target.value) || 7)}
+                min={timeMode === 'days' ? 1 : 1900}
+                max={timeMode === 'days' ? 3650 : 2100}
+                value={timeValue}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  setTimeValue(Number.isFinite(next) && next > 0 ? Math.trunc(next) : timeMode === 'days' ? 7 : new Date().getFullYear());
+                }}
               />
+            </div>
+
+            <div>
+              <label htmlFor="range-mode">Range</label>
+              <select
+                id="range-mode"
+                aria-label="Range mode"
+                value={timeMode}
+                onChange={(event) => {
+                  const nextMode = event.target.value as TimeMode;
+                  setTimeMode(nextMode);
+                  if (nextMode === 'days' && (timeValue < 1 || timeValue > 3650)) {
+                    setTimeValue(7);
+                  }
+                  if (nextMode === 'year' && (timeValue < 1900 || timeValue > 2100)) {
+                    setTimeValue(new Date().getFullYear());
+                  }
+                }}
+              >
+                <option value="days">Days</option>
+                <option value="year">Year</option>
+              </select>
             </div>
 
             <div>
@@ -324,7 +359,7 @@ Subpop`}
               Add to list
             </button>
             <label className="btn secondary file-btn">
-              Upload TXT/CSV
+              Upload List
               <input
                 type="file"
                 accept=".txt,.csv,text/plain,text/csv"

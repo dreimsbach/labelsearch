@@ -1,17 +1,19 @@
-import type { LabelRef, Release, SourceMode } from '../../shared/types';
+import type { LabelRef, Release, SourceMode, TimeMode } from '../../shared/types';
 
 const LABELS_KEY = 'labelsearch.labels';
 const SETTINGS_KEY = 'labelsearch.settings';
 const RESULTS_KEY = 'labelsearch.lastResults';
 
 export interface Settings {
-  daysBack: number;
+  timeMode: TimeMode;
+  timeValue: number;
   country: string;
   sourceMode: SourceMode;
 }
 
 const defaultSettings: Settings = {
-  daysBack: 7,
+  timeMode: 'days',
+  timeValue: 7,
   country: 'DE',
   sourceMode: 'hybrid'
 };
@@ -39,9 +41,12 @@ export function loadSettings(): Settings {
     if (!data) {
       return defaultSettings;
     }
+    const parsed = JSON.parse(data) as Partial<Settings> & { daysBack?: number };
     return {
       ...defaultSettings,
-      ...(JSON.parse(data) as Partial<Settings>)
+      ...parsed,
+      timeMode: parsed.timeMode ?? 'days',
+      timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue
     };
   } catch {
     return defaultSettings;

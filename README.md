@@ -5,7 +5,9 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
 ## Features
 
 - Label management with MBID-backed selection
-- Search window config (`daysBack`, default `7`, includes today)
+- Search window config with selector:
+  - `Days` mode (default `7`): searches the last N days including today
+  - `Year` mode (e.g. `2026`): searches all releases in that year
 - Country dropdown (default `DE`)
 - Source mode dropdown:
   - `hybrid` (default): MusicBrainz search + iTunes enrichment
@@ -66,7 +68,7 @@ npm run dev
 ```
 
 - Frontend: `http://localhost:5173`
-- Backend API (proxied by Vite): `http://localhost:8787`
+- Backend API in dev (proxied by Vite): `http://localhost:8787`
 
 ### Quality Checks
 
@@ -139,3 +141,8 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Added runtime cover URL normalization in the card renderer to avoid stale `100x100` display links.
 - Refined control layout: instructions moved to collapsible details and button groups optimized for clearer action priority.
 - Updated direct-search UX: selected label from lookup is now used explicitly via `Search with selected label`; otherwise first result is used.
+- Added range selector with `Days` / `Year` mode (`7 Days` default).
+- Fixed range selector layout overlap by switching to a stable flex-based control layout.
+- Improved mid-size responsive controls: filter row switches to a two-column layout with full-width source selector.
+- Adjusted mid-size control grid to explicit 2x2 placement: `[empty][Range]` then `[Country][Source]`.
+- Fixed remaining range/filter overlap by making the control grid two-column by default (mobile stays one-column).

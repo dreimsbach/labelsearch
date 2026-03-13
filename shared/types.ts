@@ -1,4 +1,5 @@
 export type SourceMode = 'hybrid' | 'itunes' | 'musicbrainz';
+export type TimeMode = 'days' | 'year';
 
 export type ReleaseType = 'Album' | 'Single' | 'EP';
 
@@ -9,7 +10,8 @@ export interface LabelRef {
 
 export interface SearchRequest {
   labels: LabelRef[];
-  daysBack: number;
+  timeMode: TimeMode;
+  timeValue: number;
   country: string;
   sourceMode: SourceMode;
   timezone: string;
@@ -45,6 +47,8 @@ export interface SearchResponse {
   releases: Release[];
   meta: {
     sourceMode: SourceMode;
+    timeMode: TimeMode;
+    timeValue: number;
     country: string;
     fromDate: string;
     toDate: string;

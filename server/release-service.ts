@@ -156,7 +156,7 @@ function mergeRelease(existing: Release, incoming: Release, labelName: string): 
 }
 
 export async function findReleases(input: SearchRequest): Promise<SearchResult> {
-  const { fromDate, toDate } = computeDateRange(input.daysBack, input.timezone);
+  const { fromDate, toDate } = computeDateRange(input.timeMode, input.timeValue, input.timezone);
 
   const releaseMap = new Map<string, Release>();
   const failures: LabelFailure[] = [];
