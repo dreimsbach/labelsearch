@@ -16,6 +16,14 @@ const defaultSettings: Settings = {
   sourceMode: 'hybrid'
 };
 
+function upgradeArtworkUrl(url?: string): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  return url.replace(/\/\d+x\d+bb\.jpg$/i, '/1200x1200bb.jpg');
+}
+
 export function loadLabels(): LabelRef[] {
   try {
     const data = localStorage.getItem(LABELS_KEY);
@@ -58,7 +66,11 @@ export function loadResults(): Release[] {
     if (!data) {
       return [];
     }
-    return JSON.parse(data) as Release[];
+    const parsed = JSON.parse(data) as Release[];
+    return parsed.map((release) => ({
+      ...release,
+      coverUrl: upgradeArtworkUrl(release.coverUrl)
+    }));
   } catch {
     return [];
   }

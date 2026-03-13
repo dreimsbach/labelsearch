@@ -11,6 +11,14 @@ interface SearchResult {
   partialFailures: LabelFailure[];
 }
 
+function toHighResArtwork(url?: string): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  return url.replace(/\/\d+x\d+bb\.jpg$/i, '/1200x1200bb.jpg');
+}
+
 function releaseArtist(release: MbRelease): string {
   return release['artist-credit']?.[0]?.name?.trim() ?? 'Unknown Artist';
 }
@@ -51,7 +59,7 @@ async function enrichWithItunes(release: Release, country: string, mbRelease: Mb
 
   return {
     ...release,
-    coverUrl: matched.artworkUrl100,
+    coverUrl: toHighResArtwork(matched.artworkUrl100),
     appleArtistUrl: matched.artistViewUrl,
     appleAlbumUrl: matched.collectionViewUrl,
     type: mapReleaseType(
@@ -146,7 +154,7 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
             genres: resolveGenres(candidate.primaryGenreName, [], []),
             labels: [label.name],
             type: mapReleaseType(undefined, [], candidate.collectionType, candidate.collectionName),
-            coverUrl: candidate.artworkUrl100,
+            coverUrl: toHighResArtwork(candidate.artworkUrl100),
             appleArtistUrl: candidate.artistViewUrl,
             appleAlbumUrl: candidate.collectionViewUrl,
             sourceDetails: {
