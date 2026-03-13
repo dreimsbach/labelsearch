@@ -72,40 +72,48 @@ select {
   align-self: start;
 }
 
-.instructions {
+.instructions-collapsible {
   margin-bottom: 14px;
-  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #f2f6ef;
+  background: #f7faf4;
+  overflow: hidden;
 }
 
-.instructions h2,
-.instructions h3 {
-  margin: 0 0 8px;
-}
-
-.instructions h2 {
-  font-size: 1.05rem;
-}
-
-.instructions h3 {
-  font-size: 0.95rem;
-  margin-top: 10px;
-}
-
-.instructions ol,
-.instructions p {
-  margin: 0;
+.instructions-collapsible summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-weight: 600;
   color: var(--muted);
 }
 
-.instructions ol {
+.instructions-collapsible summary::-webkit-details-marker {
+  display: none;
+}
+
+.instructions-collapsible[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.instructions-collapsible ol,
+.instructions-collapsible p {
+  margin: 0;
+  color: var(--muted);
+  padding: 0 12px;
+}
+
+.instructions-collapsible ol {
+  padding-top: 10px;
+}
+
+.instructions-collapsible ol {
   padding-left: 18px;
 }
 
-.instructions pre {
+.instructions-collapsible pre {
   margin: 8px 0 0;
+  margin: 8px 12px 12px;
   padding: 10px;
   border-radius: 8px;
   background: #182521;
@@ -157,7 +165,7 @@ a:focus-visible {
 }
 
 .btn {
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 10px;
   padding: 10px 14px;
   cursor: pointer;
@@ -175,8 +183,9 @@ a:focus-visible {
 }
 
 .btn.secondary {
-  background: #1f2f2a;
-  color: white;
+  background: #fff;
+  color: var(--text);
+  border-color: var(--line);
 }
 
 .btn.danger {
@@ -184,8 +193,24 @@ a:focus-visible {
   color: white;
 }
 
+.btn.danger.subtle {
+  background: #fff;
+  color: var(--danger);
+  border-color: #dcb4b4;
+}
+
 .file-btn input {
   display: none;
+}
+
+.button-row-main {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.button-row-secondary .btn {
+  font-weight: 500;
 }
 
 .result-list {
@@ -382,6 +407,10 @@ a:focus-visible {
   }
 
   .release-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .button-row-main {
     grid-template-columns: 1fr;
   }
 }

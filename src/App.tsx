@@ -233,14 +233,13 @@ export function App(): JSX.Element {
 
       <main className="layout">
         <section className="panel controls" aria-label="Search controls">
-          <section className="instructions" aria-label="Instructions">
-            <h2>How it works</h2>
+          <details className="instructions-collapsible" aria-label="Instructions">
+            <summary>Instructions & import format</summary>
             <ol>
               <li>Search a label and add it to your list, or upload a label file.</li>
               <li>Set days back, country, and source mode.</li>
-              <li>Run direct search or search all labels from your list.</li>
+              <li>Use direct search or search all labels from your list.</li>
             </ol>
-            <h3>Import file format</h3>
             <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
             <pre>
 {`#Rock Music
@@ -248,7 +247,7 @@ Run for Cover Records
 Smallville
 Subpop`}
             </pre>
-          </section>
+          </details>
 
           <div className="input-row">
             <label htmlFor="label-query">Label</label>
@@ -294,15 +293,41 @@ Subpop`}
             </div>
           </div>
 
-          <div className="button-row">
+          <div className="button-row button-row-main">
+            <button type="button" className="btn primary" onClick={searchDirectly} disabled={loading || !labelQuery.trim()}>
+              Search directly
+            </button>
+            <button className="btn primary" type="button" onClick={() => runSearch(labels)} disabled={!canSearch}>
+              Find from list
+            </button>
+          </div>
+
+          <div className="button-row button-row-secondary">
             <button type="button" className="btn secondary" onClick={() => runLabelLookup(labelQuery)}>
               Find label
             </button>
             <button type="button" className="btn secondary" onClick={addSelectedToList} disabled={!selectedSearchResult}>
               Add to list
             </button>
-            <button type="button" className="btn primary" onClick={searchDirectly} disabled={loading || !labelQuery.trim()}>
-              Search directly
+            <label className="btn secondary file-btn">
+              Upload TXT/CSV
+              <input
+                type="file"
+                accept=".txt,.csv,text/plain,text/csv"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    void uploadFile(file);
+                    event.target.value = '';
+                  }
+                }}
+              />
+            </label>
+            <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
+              Export List
+            </button>
+            <button className="btn danger subtle" type="button" onClick={() => setLabels([])} disabled={loading || labels.length === 0}>
+              Clear all
             </button>
           </div>
 
@@ -320,32 +345,6 @@ Subpop`}
               ))}
             </div>
           )}
-
-          <div className="button-row">
-            <label className="btn secondary file-btn">
-              Upload TXT/CSV
-              <input
-                type="file"
-                accept=".txt,.csv,text/plain,text/csv"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    void uploadFile(file);
-                    event.target.value = '';
-                  }
-                }}
-              />
-            </label>
-            <button className="btn primary" type="button" onClick={() => runSearch(labels)} disabled={!canSearch}>
-              Find from list
-            </button>
-            <button className="btn danger" type="button" onClick={() => setLabels([])} disabled={loading || labels.length === 0}>
-              Clear all
-            </button>
-            <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
-              Export List
-            </button>
-          </div>
 
           <div>
             <h2>Label list ({labels.length})</h2>

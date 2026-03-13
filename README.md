@@ -25,7 +25,8 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
 - Local persistence via `localStorage`
 - Responsive UI for desktop/tablet/mobile
 - Cover Art Archive (MusicBrainz) preferred for covers (original image), with high-res iTunes fallback
-- On-page instruction section explaining workflow and import format
+- Collapsible on-page instruction section explaining workflow and import format
+- Improved action button hierarchy (primary search actions + secondary utility actions)
 
 ## Tech Stack
 
@@ -133,3 +134,4 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Improved cover quality/accuracy by preferring Cover Art Archive original images with iTunes fallback.
 - Set iTunes fallback artwork target size to `1200x1200bb.jpg`.
 - Added runtime cover URL normalization in the card renderer to avoid stale `100x100` display links.
+- Refined control layout: instructions moved to collapsible details and button groups optimized for clearer action priority.

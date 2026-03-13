@@ -39,7 +39,8 @@ Behavior:
 - Empty state when no releases found
 - Error state for API/provider failures
 - Progress display for list search/import (`x / n`)
-- Visible instruction section explaining search workflow and import format
+- Collapsible instruction section explaining search workflow and import format
+- Button hierarchy with clear primary actions (search) and secondary utility actions
 - Keyboard-accessible form fields and actionable elements
 - Visible focus styles and sufficient color contrast
 
@@ -339,3 +340,4 @@ Required checks:
 - Updated cover strategy: prefer Cover Art Archive artwork (MB release ID), fallback to high-res iTunes.
 - Refined cover strategy: prefer original CAA image and use `1200x1200bb.jpg` for iTunes fallback artwork.
 - Added runtime cover URL normalization to prevent old cached `100x100` Apple image links from rendering low-res covers.
+- Refined controls layout: instruction panel is collapsible and action buttons are grouped by priority.
