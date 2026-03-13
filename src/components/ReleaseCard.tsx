@@ -4,23 +4,13 @@ interface Props {
   release: Release;
 }
 
-function coverUrl(url?: string): string | undefined {
-  if (!url) {
-    return undefined;
-  }
-
-  return url.replace(/\/\d+x\d+bb\.jpg$/i, '/1200x1200bb.jpg');
-}
-
 export function ReleaseCard({ release }: Props): JSX.Element {
-  const imageUrl = coverUrl(release.coverUrl);
-
   return (
     <article className="release-card">
       <div className="cover-wrap">
-        {imageUrl ? (
+        {release.coverUrl ? (
           <img
-            src={imageUrl}
+            src={release.coverUrl}
             alt={`${release.title} cover`}
             className="cover"
             loading="lazy"

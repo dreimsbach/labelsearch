@@ -53,6 +53,7 @@ Behavior:
 - Remove individual labels by clicking chip
 - Clear entire label list
 - Upload label list from `TXT/CSV`
+- Export current label list as `CSV` for later re-import
 
 ## 3.2 Search Configuration
 
@@ -116,6 +117,7 @@ Used for:
 - Primary genre
 - Apple artist/album links
 - Optional type signal (`collectionType`)
+- Cover URL is normalized to high-res format (`1200x1200bb.jpg`) when available
 
 ## 5. Matching, Mapping, and Dedupe Rules
 
@@ -307,3 +309,11 @@ Required checks:
 - Container test:
   - image builds
   - `/api/health` responds in running container
+
+## 11. Changelog
+
+### 2026-03-13
+
+- Added label list CSV export requirement (compatible with TXT/CSV import flow).
+- Added high-res cover normalization rule for iTunes artwork URLs (`1200x1200bb.jpg`).
+- Added UI layout fix requirement for control overflow in the filter grid.

@@ -59,6 +59,27 @@ export function App(): JSX.Element {
 
   const canSearch = labels.length > 0 && !loading;
 
+  function exportLabelsCsv(): void {
+    if (labels.length === 0) {
+      return;
+    }
+
+    const csv = labels
+      .map((label) => `"${label.name.replace(/"/g, '""')}"`)
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const day = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `labels-${day}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }
+
   async function runLabelLookup(query: string): Promise<void> {
     if (!query.trim()) {
       setLabelSearchResults([]);
@@ -304,6 +325,9 @@ export function App(): JSX.Element {
             </button>
             <button className="btn danger" type="button" onClick={() => setLabels([])} disabled={loading || labels.length === 0}>
               Clear all
+            </button>
+            <button className="btn secondary" type="button" onClick={exportLabelsCsv} disabled={labels.length === 0}>
+              Export CSV
             </button>
           </div>
 

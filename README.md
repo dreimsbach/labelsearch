@@ -21,8 +21,10 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
   - type (`Album`, `Single`, `EP`)
   - Apple artist link (+ album page when available)
 - TXT/CSV upload for batch label import
+- CSV export of current label list (future re-upload compatible)
 - Local persistence via `localStorage`
 - Responsive UI for desktop/tablet/mobile
+- High-res Apple cover URLs (auto-upgrades legacy cached cover URLs)
 
 ## Tech Stack
 
@@ -37,6 +39,7 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
 - `server/`: API, provider integrations, matching logic
 - `shared/`: shared API/types between frontend and backend
 - `docs/SPEC.md`: product + technical specification
+- `AGENTS.md`: persistent maintenance rules (docs/deploy sync requirements)
 
 ## Quick Start
 
@@ -113,3 +116,10 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - iTunes matching uses a deterministic score threshold for confidence.
 - If enrichment fails, MusicBrainz release entries are still shown.
 
+## Changelog
+
+### 2026-03-13
+
+- Added CSV export for the current label list (`Export CSV`) with re-upload compatible format.
+- Upgraded cover handling to high-res Apple artwork URLs (`1200x1200bb.jpg`).
+- Fixed form control overflow so dropdowns stay within their grid container.
