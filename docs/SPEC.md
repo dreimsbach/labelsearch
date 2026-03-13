@@ -51,6 +51,9 @@ Behavior:
 - Direct label input field
 - Label lookup via MusicBrainz search endpoint
 - Candidate selection with disambiguation context (`country`, `disambiguation`)
+- Direct-search rule:
+  - default: use first label result for current input query
+  - when user selected a lookup candidate: primary button changes to `Search with selected label` and searches with that candidate
 - Add selected label to persistent list
 - Remove individual labels by clicking chip
 - Clear entire label list
@@ -341,3 +344,4 @@ Required checks:
 - Refined cover strategy: prefer original CAA image and use `1200x1200bb.jpg` for iTunes fallback artwork.
 - Added runtime cover URL normalization to prevent old cached `100x100` Apple image links from rendering low-res covers.
 - Refined controls layout: instruction panel is collapsible and action buttons are grouped by priority.
+- Updated direct-search behavior to use selected lookup candidate when present; otherwise first result.

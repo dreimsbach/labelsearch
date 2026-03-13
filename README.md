@@ -11,6 +11,9 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
   - `hybrid` (default): MusicBrainz search + iTunes enrichment
   - `musicbrainz`
   - `itunes`
+- Direct search behavior:
+  - without selected candidate: uses the first label result for input query
+  - with selected candidate from result list: button switches to `Search with selected label`
 - Release grid with:
   - cover
   - artist
@@ -135,3 +138,4 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Set iTunes fallback artwork target size to `1200x1200bb.jpg`.
 - Added runtime cover URL normalization in the card renderer to avoid stale `100x100` display links.
 - Refined control layout: instructions moved to collapsible details and button groups optimized for clearer action priority.
+- Updated direct-search UX: selected label from lookup is now used explicitly via `Search with selected label`; otherwise first result is used.

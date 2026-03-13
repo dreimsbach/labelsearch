@@ -202,19 +202,25 @@ export function App(): JSX.Element {
   }
 
   async function searchDirectly(): Promise<void> {
+    if (selectedSearchResult) {
+      await runSearch([{ mbid: selectedSearchResult.id, name: selectedSearchResult.name }]);
+      return;
+    }
+
     if (!labelQuery.trim()) {
       return;
     }
 
     try {
       const found = await searchLabels(labelQuery.trim());
-      const selected = pickBestLabelCandidate(found, labelQuery, country);
+      const selected = found[0] ?? null;
 
       if (!selected) {
         setError('No label found for direct search');
         return;
       }
 
+      setSelectedSearchResult(selected);
       const labelRef = { mbid: selected.id, name: selected.name };
       await runSearch([labelRef]);
     } catch (directError) {
@@ -254,7 +260,10 @@ Subpop`}
             <input
               id="label-query"
               value={labelQuery}
-              onChange={(event) => setLabelQuery(event.target.value)}
+              onChange={(event) => {
+                setLabelQuery(event.target.value);
+                setSelectedSearchResult(null);
+              }}
               placeholder="Run for Cover"
             />
           </div>
@@ -294,8 +303,13 @@ Subpop`}
           </div>
 
           <div className="button-row button-row-main">
-            <button type="button" className="btn primary" onClick={searchDirectly} disabled={loading || !labelQuery.trim()}>
-              Search directly
+            <button
+              type="button"
+              className="btn primary"
+              onClick={searchDirectly}
+              disabled={loading || (!labelQuery.trim() && !selectedSearchResult)}
+            >
+              {selectedSearchResult ? 'Search with selected label' : 'Search directly'}
             </button>
             <button className="btn primary" type="button" onClick={() => runSearch(labels)} disabled={!canSearch}>
               Find from list
