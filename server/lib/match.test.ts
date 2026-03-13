@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapReleaseType, pickBestItunesMatch, resolveGenres, scoreCandidate } from './match.js';
+import { mapReleaseType, pickBestExternalMatch, pickBestItunesMatch, resolveGenres, scoreCandidate, scoreExternalCandidate } from './match.js';
 
 describe('match helpers', () => {
   it('scores exact match at 100', () => {
@@ -33,5 +33,30 @@ describe('match helpers', () => {
 
   it('builds genre fallback', () => {
     expect(resolveGenres('Indie-Pop', ['Indie Rock'], ['dream pop', 'dream pop'])).toEqual(['Indie-Pop', 'Indie Rock', 'dream pop']);
+  });
+
+  it('scores external candidate with strict date requirement', () => {
+    const score = scoreExternalCandidate('Simo Cell', 'MURMURATIONS', '2026-03-12', {
+      source: 'deezer',
+      id: 1,
+      artistName: 'Simo Cell',
+      collectionName: 'MURMURATIONS',
+      releaseDate: '2026-03-12'
+    });
+
+    expect(score).toBeGreaterThanOrEqual(80);
+  });
+
+  it('rejects external candidates without usable date proximity', () => {
+    const picked = pickBestExternalMatch('Simo Cell', 'MURMURATIONS', '2026-03-12', [
+      {
+        source: 'deezer',
+        id: 2,
+        artistName: 'Simo Cell',
+        collectionName: 'MURMURATIONS'
+      }
+    ]);
+
+    expect(picked).toBeNull();
   });
 });

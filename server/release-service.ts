@@ -1,6 +1,9 @@
 import type { LabelFailure, LabelRef, Release, SearchRequest } from '../shared/types.js';
 import { computeDateRange } from './lib/date.js';
-import { dedupeReleaseKey, mapReleaseType, pickBestItunesMatch, resolveGenres } from './lib/match.js';
+import { dedupeReleaseKey, mapReleaseType, pickBestExternalMatch, pickBestItunesMatch, resolveGenres } from './lib/match.js';
+import { logWarn } from './lib/logger.js';
+import { findDeezerCandidates } from './providers/deezer.js';
+import { findDiscogsCandidates } from './providers/discogs.js';
 import { findItunesCandidates } from './providers/itunes.js';
 import { searchReleasesByLabel, type MbRelease } from './providers/musicbrainz.js';
 
@@ -14,7 +17,6 @@ interface SearchResult {
 interface CoverArtArchivePayload {
   images?: Array<{
     front?: boolean;
-    image?: string;
     thumbnails?: {
       large?: string;
       [key: string]: string | undefined;
@@ -23,6 +25,49 @@ interface CoverArtArchivePayload {
 }
 
 const coverArtCache = new Map<string, Promise<string | undefined>>();
+
+function uniqueLinks(items: Release['externalLinks'] = []): Release['externalLinks'] {
+  const seen = new Set<string>();
+  const out: NonNullable<Release['externalLinks']> = [];
+
+  for (const item of items) {
+    if (!item?.url || seen.has(item.url)) {
+      continue;
+    }
+    seen.add(item.url);
+    out.push(item);
+  }
+
+  return out;
+}
+
+function mapMbExternalLinks(release: MbRelease): NonNullable<Release['externalLinks']> {
+  const links = (release.relations ?? [])
+    .map((relation) => relation.url?.resource?.trim())
+    .filter((url): url is string => Boolean(url && /^https?:\/\//i.test(url)))
+    .slice(0, 6)
+    .map((url) => ({
+      label: 'Official',
+      url,
+      source: 'musicbrainz' as const
+    }));
+
+  return uniqueLinks(links) ?? [];
+}
+
+function mediaFormat(release: MbRelease): string | undefined {
+  const formats = (release.media ?? []).map((entry) => entry.format?.trim()).filter((entry): entry is string => Boolean(entry));
+  if (formats.length === 0) {
+    return undefined;
+  }
+
+  return [...new Set(formats)].join(', ');
+}
+
+function trackCount(release: MbRelease): number | undefined {
+  const total = (release.media ?? []).reduce((sum, media) => sum + (media['track-count'] ?? 0), 0);
+  return total > 0 ? total : undefined;
+}
 
 function toHighResArtwork(url?: string): string | undefined {
   if (!url) {
@@ -58,8 +103,12 @@ async function findCoverArtUrl(mbReleaseId?: string): Promise<string | undefined
 
       const payload = (await response.json()) as CoverArtArchivePayload;
       const front = payload.images?.find((image) => image.front) ?? payload.images?.[0];
-      // Prefer the original CAA image (usually highest quality), then fallback to thumbnails.
-      return front?.image ?? front?.thumbnails?.large ?? front?.thumbnails?.['500'];
+      // Force CAA to 1200 variant to avoid very large originals (e.g. 3000x3000).
+      if (front) {
+        return `https://coverartarchive.org/release/${mbReleaseId}/front-1200`;
+      }
+
+      return undefined;
     } catch {
       return undefined;
     } finally {
@@ -88,6 +137,13 @@ function mapBaseRelease(release: MbRelease, label: LabelRef, mode: SearchRequest
     genres: [],
     labels: [label.name],
     type: mapReleaseType(release['release-group']?.['primary-type'], release['release-group']?.['secondary-types'], undefined, release.title),
+    status: release.status,
+    country: release.country,
+    barcode: release.barcode,
+    packaging: release.packaging,
+    trackCount: trackCount(release),
+    mediaFormat: mediaFormat(release),
+    externalLinks: mapMbExternalLinks(release),
     sourceDetails: {
       musicbrainzReleaseId: release.id,
       musicbrainzReleaseGroupId: release['release-group']?.id
@@ -104,15 +160,88 @@ async function enrichWithItunes(
   mbRelease: MbRelease,
   mbCoverUrl?: string
 ): Promise<Release> {
-  const candidates = await findItunesCandidates(release.artist, release.title, country);
-  const matched = pickBestItunesMatch(release.artist, release.title, release.releaseDate, candidates);
+  let matched = null;
+  try {
+    const candidates = await findItunesCandidates(release.artist, release.title, country);
+    matched = pickBestItunesMatch(release.artist, release.title, release.releaseDate, candidates);
+  } catch {
+    matched = null;
+  }
 
   if (!matched) {
-    return {
+    let merged: Release = {
       ...release,
       coverUrl: mbCoverUrl ?? release.coverUrl,
       genres: resolveGenres(undefined, mbRelease.genres?.map((entry) => entry.name) ?? [], mbRelease.tags?.map((entry) => entry.name) ?? [])
     };
+
+    let deezerMatch = null;
+    try {
+      const deezerCandidates = await findDeezerCandidates(release.artist, release.title);
+      deezerMatch = pickBestExternalMatch(release.artist, release.title, release.releaseDate, deezerCandidates);
+    } catch {
+      deezerMatch = null;
+    }
+    if (deezerMatch) {
+      merged = {
+        ...merged,
+        coverUrl: merged.coverUrl ?? deezerMatch.artworkUrl,
+        deezerAlbumUrl: deezerMatch.albumUrl ?? merged.deezerAlbumUrl,
+        externalLinks: uniqueLinks([
+          ...(merged.externalLinks ?? []),
+          ...(deezerMatch.albumUrl
+            ? [
+                {
+                  label: 'Deezer',
+                  url: deezerMatch.albumUrl,
+                  source: 'deezer' as const
+                }
+              ]
+            : [])
+        ]),
+        sourceDetails: {
+          ...merged.sourceDetails,
+          deezerAlbumId: deezerMatch.id
+        },
+        matchConfidence: 'high',
+        matchedBy: 'hybrid-deezer'
+      };
+    }
+
+    let discogsMatch = null;
+    try {
+      const discogsCandidates = await findDiscogsCandidates(release.artist, release.title);
+      discogsMatch = pickBestExternalMatch(release.artist, release.title, release.releaseDate, discogsCandidates);
+    } catch {
+      discogsMatch = null;
+    }
+    if (discogsMatch) {
+      merged = {
+        ...merged,
+        coverUrl: merged.coverUrl ?? discogsMatch.artworkUrl,
+        discogsReleaseUrl: discogsMatch.albumUrl ?? merged.discogsReleaseUrl,
+        externalLinks: uniqueLinks([
+          ...(merged.externalLinks ?? []),
+          ...(discogsMatch.albumUrl
+            ? [
+                {
+                  label: 'Discogs',
+                  url: discogsMatch.albumUrl,
+                  source: 'discogs' as const
+                }
+              ]
+            : [])
+        ]),
+        sourceDetails: {
+          ...merged.sourceDetails,
+          discogsReleaseId: discogsMatch.id
+        },
+        matchConfidence: 'high',
+        matchedBy: merged.matchedBy === 'hybrid-deezer' ? merged.matchedBy : 'hybrid-discogs'
+      };
+    }
+
+    return merged;
   }
 
   return {
@@ -120,6 +249,27 @@ async function enrichWithItunes(
     coverUrl: mbCoverUrl ?? toHighResArtwork(matched.artworkUrl100),
     appleArtistUrl: matched.artistViewUrl,
     appleAlbumUrl: matched.collectionViewUrl,
+    externalLinks: uniqueLinks([
+      ...(release.externalLinks ?? []),
+      ...(matched.collectionViewUrl
+        ? [
+            {
+              label: 'Apple Album',
+              url: matched.collectionViewUrl,
+              source: 'itunes' as const
+            }
+          ]
+        : []),
+      ...(matched.artistViewUrl
+        ? [
+            {
+              label: 'Apple Artist',
+              url: matched.artistViewUrl,
+              source: 'itunes' as const
+            }
+          ]
+        : [])
+    ]),
     type: mapReleaseType(
       mbRelease['release-group']?.['primary-type'],
       mbRelease['release-group']?.['secondary-types'],
@@ -143,6 +293,17 @@ function mergeRelease(existing: Release, incoming: Release, labelName: string): 
   const labels = new Set([...existing.labels, ...incoming.labels]);
   const matchedByLabel = new Set([...existing.matchedByLabel, labelName]);
 
+  const mergedMatchSource = (() => {
+    const priority: Record<Release['matchedBy'], number> = {
+      musicbrainz: 0,
+      hybrid: 1,
+      itunes: 2,
+      'hybrid-discogs': 3,
+      'hybrid-deezer': 4
+    };
+    return priority[incoming.matchedBy] >= priority[existing.matchedBy] ? incoming.matchedBy : existing.matchedBy;
+  })();
+
   return {
     ...existing,
     labels: [...labels],
@@ -151,6 +312,20 @@ function mergeRelease(existing: Release, incoming: Release, labelName: string): 
     appleArtistUrl: existing.appleArtistUrl ?? incoming.appleArtistUrl,
     appleAlbumUrl: existing.appleAlbumUrl ?? incoming.appleAlbumUrl,
     genres: existing.genres.length > 0 ? existing.genres : incoming.genres,
+    status: existing.status ?? incoming.status,
+    country: existing.country ?? incoming.country,
+    barcode: existing.barcode ?? incoming.barcode,
+    packaging: existing.packaging ?? incoming.packaging,
+    trackCount: existing.trackCount ?? incoming.trackCount,
+    mediaFormat: existing.mediaFormat ?? incoming.mediaFormat,
+    deezerAlbumUrl: existing.deezerAlbumUrl ?? incoming.deezerAlbumUrl,
+    discogsReleaseUrl: existing.discogsReleaseUrl ?? incoming.discogsReleaseUrl,
+    externalLinks: uniqueLinks([...(existing.externalLinks ?? []), ...(incoming.externalLinks ?? [])]),
+    sourceDetails: {
+      ...existing.sourceDetails,
+      ...incoming.sourceDetails
+    },
+    matchedBy: mergedMatchSource,
     matchConfidence: existing.matchConfidence === 'high' || incoming.matchConfidence === 'high' ? 'high' : 'none'
   };
 }
@@ -191,6 +366,11 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
         }
       }
     } catch (error) {
+      void logWarn('Label processing failed', {
+        label: label.name,
+        sourceMode: input.sourceMode,
+        message: error instanceof Error ? error.message : String(error)
+      });
       failures.push({
         label,
         message: error instanceof Error ? error.message : 'Unknown provider error'
@@ -219,6 +399,26 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
             coverUrl: toHighResArtwork(candidate.artworkUrl100),
             appleArtistUrl: candidate.artistViewUrl,
             appleAlbumUrl: candidate.collectionViewUrl,
+            externalLinks: uniqueLinks([
+              ...(candidate.collectionViewUrl
+                ? [
+                    {
+                      label: 'Apple Album',
+                      url: candidate.collectionViewUrl,
+                      source: 'itunes' as const
+                    }
+                  ]
+                : []),
+              ...(candidate.artistViewUrl
+                ? [
+                    {
+                      label: 'Apple Artist',
+                      url: candidate.artistViewUrl,
+                      source: 'itunes' as const
+                    }
+                  ]
+                : [])
+            ]),
             sourceDetails: {
               itunesCollectionId: candidate.collectionId
             },
@@ -236,6 +436,10 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
           }
         }
       } catch (error) {
+        void logWarn('iTunes-only fallback failed', {
+          label: label.name,
+          message: error instanceof Error ? error.message : String(error)
+        });
         failures.push({
           label,
           message: error instanceof Error ? error.message : 'Unknown provider error'

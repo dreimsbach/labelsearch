@@ -8,3 +8,4 @@ services:
       PORT: "8787"
       NODE_ENV: "production"
       MB_USER_AGENT: "label-release-tracker/0.1.0 (local@docker)"
+      LOG_FILE_PATH: "/app/logs/app.log"

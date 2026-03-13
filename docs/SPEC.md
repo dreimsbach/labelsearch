@@ -8,7 +8,7 @@ Core behavior:
 
 1. Find/select labels from MusicBrainz and store them with MBID.
 2. Search releases for a configurable date window with mode selector (`Days` default `7`, or `Year`).
-3. Enrich results with iTunes metadata where available.
+3. Enrich results with multi-source metadata (iTunes, Deezer, Discogs) where available.
 4. Present releases in a modern, responsive, card-based overview.
 
 ## 2. UX and Visual Requirements
@@ -97,15 +97,16 @@ Each release card shows:
 - Release date
 - 1-3 genres/microgenres (best effort)
 - Label(s)
-- Type (`Album`, `Single`, `EP`)
-- Apple artist link
-- Optional Apple album page link
+- No additional detail/link section in card UI (core fields only)
+- Apple artist icon link (`music://` desktop app deep link)
+- Optional Apple album icon link (`music://` desktop app deep link)
+- If no Apple links are available, show fallback button to copy `Artist + " " + Album title` to clipboard
 
 ## 4. Data Sources and Provider Strategy
 
 ## 4.1 Source Modes
 
-- `hybrid`: MusicBrainz as primary source + iTunes enrichment
+- `hybrid`: MusicBrainz as primary source + iTunes/Deezer/Discogs enrichment
 - `musicbrainz`: MusicBrainz only
 - `itunes`: iTunes only (best-effort label matching)
 
@@ -128,13 +129,39 @@ Operational rule:
 
 Used for:
 
-- Cover art
+- Cover art fallback
 - Primary genre
 - Apple artist/album links
 - Optional type signal (`collectionType`)
 - Cover URL is normalized to high-res format (`1200x1200bb.jpg`) when available
 
-## 4.4 Cover Art Archive (MusicBrainz)
+## 4.4 Deezer
+
+Used for:
+
+- Cover art fallback
+- Deezer album link
+- Optional fallback genre
+
+Lookup strategy:
+
+- staged query fallback: `artist+title` -> `title` -> `artist`
+- strict candidate acceptance via normalized artist/title + date proximity (`±7` days)
+
+## 4.5 Discogs
+
+Used for:
+
+- Discogs release link fallback
+- Cover art fallback
+
+Lookup strategy:
+
+- staged query fallback: `artist+release_title` -> `release_title` -> `artist`
+- strict candidate acceptance via normalized artist/title + date proximity (`±7` days)
+- `DISCOGS_TOKEN` optional for higher reliability/rate limits
+
+## 4.6 Cover Art Archive (MusicBrainz)
 
 Used for:
 
@@ -142,8 +169,8 @@ Used for:
 
 Rule:
 
-- If Cover Art Archive has a front image, use the original `image` URL first.
-- If not available, fallback to iTunes artwork (when available).
+- If Cover Art Archive has a front image, use `https://coverartarchive.org/release/<MBID>/front-1200`.
+- If not available, fallback chain is: Deezer -> iTunes -> Discogs.
 - At render time, Apple artwork URLs are normalized to a high-resolution variant to avoid stale low-res display links.
 
 ## 5. Matching, Mapping, and Dedupe Rules
@@ -179,6 +206,7 @@ On duplicate:
 - merge labels
 - merge matched-by-label list
 - keep best available enrichment fields
+- merge external links by URL (deduped)
 
 ## 5.3 Type Mapping
 
@@ -198,6 +226,7 @@ Priority order (max 3, deduped case-insensitive):
 1. iTunes `primaryGenreName`
 2. MusicBrainz `genres[].name`
 3. MusicBrainz `tags[].name`
+4. Deezer/Discogs fallback genre when present
 
 Validation:
 
@@ -267,17 +296,31 @@ Response body:
       "genres": ["Indie-Pop"],
       "labels": ["Morr Music"],
       "type": "Album",
+      "status": "Official",
+      "country": "DE",
+      "barcode": "1234567890123",
+      "packaging": "None",
+      "trackCount": 12,
+      "mediaFormat": "Digital Media",
       "coverUrl": "...",
       "appleArtistUrl": "...",
       "appleAlbumUrl": "...",
+      "deezerAlbumUrl": "...",
+      "discogsReleaseUrl": "...",
+      "externalLinks": [
+        { "label": "Official", "url": "https://...", "source": "musicbrainz" },
+        { "label": "Apple Album", "url": "https://...", "source": "itunes" }
+      ],
       "sourceDetails": {
         "musicbrainzReleaseId": "...",
         "musicbrainzReleaseGroupId": "...",
-        "itunesCollectionId": 1872527079
+        "itunesCollectionId": 1872527079,
+        "deezerAlbumId": 123456,
+        "discogsReleaseId": 1234567
       },
       "matchedByLabel": ["Morr Music"],
       "matchConfidence": "high",
-      "matchedBy": "hybrid"
+      "matchedBy": "hybrid-deezer"
     }
   ],
   "meta": {
@@ -307,6 +350,7 @@ Stored in browser `localStorage`:
 - Continue on partial provider failure (report per-label errors)
 - Do not drop MB releases when iTunes enrichment fails
 - Must run in Docker as a single deployable container
+- Server writes structured operational logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`)
 
 ## 9. Deployment Specification
 
@@ -324,6 +368,15 @@ Stored in browser `localStorage`:
 - `Dockerfile`
 - `.dockerignore`
 - `docker-compose.yml`
+
+## 9.3 Runtime Logging
+
+- Default log file path: `logs/app.log` (project root)
+- Can be overridden via env var `LOG_FILE_PATH`
+- Logged events:
+  - server startup
+  - HTTP request summary (`method`, `path`, `status`, `durationMs`)
+  - provider/search failures and partial label failures
 
 ## 10. Testing Specification
 
@@ -344,6 +397,27 @@ Required checks:
 
 ### 2026-03-13
 
+- Added structured backend logging to file + console (`LOG_FILE_PATH`, default `logs/app.log`).
+- Added request and provider-failure logging requirements.
+- Updated docker-compose runtime env with `LOG_FILE_PATH=/app/logs/app.log`.
+- Updated card layout to bottom-align action controls (Apple icon links or copy fallback button) across mixed content heights.
+- Added no-link fallback action in cards: copy `Artist + Album` to clipboard.
+- Increased Apple Music icon-button size in release cards for improved touch usability.
+- Updated mobile layout behavior: controls/search panel is not sticky and scrolls with content.
+- Updated Apple icon source to the provided Wikimedia Apple Music icon URL in card action buttons.
+- Unified Apple app actions to a single Apple Music-style icon (artist and album both use the Apple Music icon).
+- Changed Apple links in cards to icon-only buttons (artist/album), preserving desktop deep-link behavior.
+- Removed Apple web fallback links from card UI; Apple links are app-deep-links only.
+- Updated Apple link behavior: card now exposes direct Apple Music desktop-app links (`music://`) and separate web fallback links.
+- Restored Apple artist/album links in the card UI while keeping the reduced core field set.
+- Reduced result card UI to five core fields only: album title, artist, release date, label(s), genre(s).
+- Updated CAA cover rule to force `front-1200` instead of original large image URLs.
+- Added robust multi-source enrichment strategy in `hybrid`: MusicBrainz primary data + iTunes/Deezer/Discogs fallback providers.
+- Added staged fallback search flow (`artist+title` -> `title` -> `artist`) for Deezer and Discogs.
+- Added strict external candidate acceptance rule: normalized artist/title + release date proximity (`±7` days) required.
+- Added new release fields: `status`, `country`, `barcode`, `packaging`, `trackCount`, `mediaFormat`, `deezerAlbumUrl`, `discogsReleaseUrl`, `externalLinks`.
+- Updated cover selection strategy to `CAA -> Deezer -> iTunes -> Discogs`.
+- Extended `sourceDetails` with `deezerAlbumId` and `discogsReleaseId`; extended `matchedBy` with hybrid fallback markers.
 - Added label list export requirement (compatible with TXT/CSV import flow).
 - Added high-res cover normalization rule for iTunes artwork URLs (`1200x1200bb.jpg`).
 - Added UI layout fix requirement for control overflow in the filter grid.

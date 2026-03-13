@@ -61,9 +61,22 @@ export function dedupeReleases(releases: Release[]): Release[] {
       labels: [...new Set([...current.labels, ...release.labels])],
       matchedByLabel: [...new Set([...current.matchedByLabel, ...release.matchedByLabel])],
       genres: current.genres.length > 0 ? current.genres : release.genres,
+      status: current.status ?? release.status,
+      country: current.country ?? release.country,
+      barcode: current.barcode ?? release.barcode,
+      packaging: current.packaging ?? release.packaging,
+      trackCount: current.trackCount ?? release.trackCount,
+      mediaFormat: current.mediaFormat ?? release.mediaFormat,
       coverUrl: current.coverUrl ?? release.coverUrl,
       appleArtistUrl: current.appleArtistUrl ?? release.appleArtistUrl,
       appleAlbumUrl: current.appleAlbumUrl ?? release.appleAlbumUrl,
+      deezerAlbumUrl: current.deezerAlbumUrl ?? release.deezerAlbumUrl,
+      discogsReleaseUrl: current.discogsReleaseUrl ?? release.discogsReleaseUrl,
+      externalLinks: [
+        ...new Map(
+          [...(current.externalLinks ?? []), ...(release.externalLinks ?? [])].map((entry) => [entry.url, entry])
+        ).values()
+      ],
       matchConfidence: current.matchConfidence === 'high' || release.matchConfidence === 'high' ? 'high' : 'none'
     });
   }

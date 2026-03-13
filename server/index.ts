@@ -3,12 +3,25 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findReleases } from './release-service.js';
 import { searchLabels } from './providers/musicbrainz.js';
+import { logError, logInfo } from './lib/logger.js';
 import type { HealthResponse, SearchRequest, SearchResponse } from '../shared/types.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
 
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    void logInfo('HTTP request', {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Date.now() - started
+    });
+  });
+  next();
+});
 
 app.get('/api/health', (_req, res) => {
   const payload: HealthResponse = {
@@ -31,6 +44,11 @@ app.get('/api/labels/search', async (req, res) => {
     const labels = await searchLabels(q, limit);
     res.json({ labels });
   } catch (error) {
+    void logError('Label search failed', {
+      query: q,
+      limit,
+      error: error instanceof Error ? error.message : String(error)
+    });
     res.status(502).json({
       error: error instanceof Error ? error.message : 'Label search failed'
     });
@@ -89,6 +107,12 @@ app.post('/api/releases/search', async (req, res) => {
 
     res.json(payload);
   } catch (error) {
+    void logError('Release search failed', {
+      labels: input.labels?.map((entry) => entry.name) ?? [],
+      sourceMode: input.sourceMode,
+      country: input.country,
+      error: error instanceof Error ? error.message : String(error)
+    });
     res.status(502).json({ error: error instanceof Error ? error.message : 'Search failed' });
   }
 });
@@ -102,6 +126,5 @@ app.get('*', (_req, res) => {
 });
 
 app.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`label-release-tracker listening on ${port}`);
+  void logInfo('Server started', { port });
 });

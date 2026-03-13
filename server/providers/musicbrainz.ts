@@ -23,6 +23,9 @@ export interface MbRelease {
   title: string;
   date?: string;
   status?: string;
+  country?: string;
+  barcode?: string;
+  packaging?: string;
   'release-group'?: {
     id: string;
     'primary-type'?: string;
@@ -34,6 +37,16 @@ export interface MbRelease {
   genres?: Array<{ name: string }>;
   tags?: Array<{ name: string }>;
   'label-info'?: Array<{ label?: { id: string; name: string } }>;
+  media?: Array<{
+    format?: string;
+    'track-count'?: number;
+  }>;
+  relations?: Array<{
+    type?: string;
+    url?: {
+      resource?: string;
+    };
+  }>;
 }
 
 function userAgent(): string {
@@ -67,7 +80,7 @@ export async function searchReleasesByLabel(label: LabelRef, fromDate: string, t
   url.searchParams.set('query', `laid:${label.mbid} AND date:[${fromDate} TO ${toDate}]`);
   url.searchParams.set('fmt', 'json');
   url.searchParams.set('limit', '100');
-  url.searchParams.set('inc', 'release-groups+artists+labels+genres+tags');
+  url.searchParams.set('inc', 'release-groups+artists+labels+genres+tags+media+url-rels');
 
   const payload = await limiter.schedule(() =>
     fetchJson<MbReleaseResponse>(url.toString(), {

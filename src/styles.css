@@ -304,6 +304,9 @@ a:focus-visible {
   border-radius: 14px;
   overflow: hidden;
   background: white;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .cover-wrap {
@@ -325,6 +328,9 @@ a:focus-visible {
 
 .release-content {
   padding: 10px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .release-content h3 {
@@ -342,12 +348,48 @@ a:focus-visible {
 .links {
   display: flex;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: auto;
+  padding-top: 8px;
 }
 
 .links a {
   color: #0d6d4c;
   text-decoration-thickness: 1px;
+}
+
+.icon-link {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #0d6d4c;
+  text-decoration: none;
+  background: #f7faf4;
+}
+
+.icon-link svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.icon-link img {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.fallback-copy-btn {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf4;
+  color: #0d6d4c;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .empty {
@@ -405,9 +447,7 @@ a:focus-visible {
   }
 
   .controls {
-    position: sticky;
-    top: 0;
-    z-index: 3;
+    position: static;
   }
 
   .grid-row {

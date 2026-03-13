@@ -242,7 +242,7 @@ export function App(): JSX.Element {
     <div className="page">
       <header className="hero">
         <h1>Find releases by record label</h1>
-        <p>MusicBrainz label matching with iTunes enrichment for covers, genres and Apple links.</p>
+        <p>MusicBrainz label matching with multi-source enrichment (iTunes, Deezer, Discogs) for links, covers and metadata.</p>
       </header>
 
       <main className="layout">
@@ -272,7 +272,7 @@ Subpop`}
                 setLabelQuery(event.target.value);
                 setSelectedSearchResult(null);
               }}
-              placeholder="Run for Cover"
+              placeholder="Enter music label"
             />
           </div>
 
@@ -295,7 +295,7 @@ Subpop`}
             </div>
 
             <div>
-              <label htmlFor="range-mode">Range</label>
+              <label htmlFor="range-mode">Day/Year Switch</label>
               <select
                 id="range-mode"
                 aria-label="Range mode"

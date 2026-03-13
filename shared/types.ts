@@ -30,17 +30,32 @@ export interface Release {
   genres: string[];
   labels: string[];
   type: ReleaseType;
+  status?: string;
+  country?: string;
+  barcode?: string;
+  packaging?: string;
+  trackCount?: number;
+  mediaFormat?: string;
   coverUrl?: string;
   appleArtistUrl?: string;
   appleAlbumUrl?: string;
+  deezerAlbumUrl?: string;
+  discogsReleaseUrl?: string;
+  externalLinks?: Array<{
+    label: string;
+    url: string;
+    source: 'musicbrainz' | 'itunes' | 'deezer' | 'discogs';
+  }>;
   sourceDetails: {
     musicbrainzReleaseId?: string;
     musicbrainzReleaseGroupId?: string;
     itunesCollectionId?: number;
+    deezerAlbumId?: number;
+    discogsReleaseId?: number;
   };
   matchedByLabel: string[];
   matchConfidence: 'high' | 'none';
-  matchedBy: 'itunes' | 'musicbrainz' | 'hybrid';
+  matchedBy: 'itunes' | 'musicbrainz' | 'hybrid' | 'hybrid-deezer' | 'hybrid-discogs';
 }
 
 export interface SearchResponse {
