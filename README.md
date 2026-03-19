@@ -97,11 +97,29 @@ docker compose up --build
 
 Then open `http://localhost:8787`.
 
+Image build/runtime uses `node:22-alpine` (multi-stage) to keep the final container smaller.
+
 ### Health Check
 
 ```bash
 curl http://localhost:8787/api/health
 ```
+
+### GitHub Actions (Docker Hub Push Only)
+
+The repository includes a workflow at `.github/workflows/dockerhub-push.yml` that:
+
+- runs on pushes to `main` (and manually via `workflow_dispatch`)
+- builds the Docker image
+- pushes to Docker Hub only (no server deploy step)
+- publishes tags:
+  - `drmsbh/labelsearch:latest`
+  - `drmsbh/labelsearch:sha-<commit>`
+
+Required GitHub repository secrets:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
 
 ## Environment Variables
 
@@ -130,6 +148,13 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-03-19
+
+- Added GitHub Actions workflow `.github/workflows/dockerhub-push.yml` for Docker Hub push-only CI.
+- Workflow now builds and pushes `drmsbh/labelsearch` image tags (`latest`, `sha-<commit>`) on `main` pushes and manual dispatch.
+- Documented required GitHub Secrets for Docker Hub authentication.
+- Switched Docker build/runtime base images to `node:22-alpine` and `npm ci` for a leaner, reproducible container build.
 
 ### 2026-03-13
 

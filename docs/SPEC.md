@@ -357,8 +357,9 @@ Stored in browser `localStorage`:
 ## 9.1 Docker
 
 - Multi-stage build:
-  1. build frontend + compile backend
-  2. runtime image with production dependencies
+  1. build frontend + compile backend on `node:22-alpine`
+  2. runtime image with production dependencies on `node:22-alpine`
+- Dependency install in container stages uses `npm ci` (`--omit=dev` in runtime stage).
 - Runtime serves:
   - `/api/*` via Express
   - static frontend files from same process
@@ -378,6 +379,23 @@ Stored in browser `localStorage`:
   - HTTP request summary (`method`, `path`, `status`, `durationMs`)
   - provider/search failures and partial label failures
 
+## 9.4 CI/CD Container Publishing
+
+- GitHub Actions workflow file: `.github/workflows/dockerhub-push.yml`
+- Trigger:
+  - push to `main`
+  - manual run via `workflow_dispatch`
+- Behavior:
+  - build Docker image from repository `Dockerfile`
+  - push image to Docker Hub only
+  - no remote server deployment step in CI
+- Published image/tags:
+  - `drmsbh/labelsearch:latest`
+  - `drmsbh/labelsearch:sha-<commit>`
+- Required repository secrets:
+  - `DOCKERHUB_USERNAME`
+  - `DOCKERHUB_TOKEN`
+
 ## 10. Testing Specification
 
 Required checks:
@@ -394,6 +412,13 @@ Required checks:
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-03-19
+
+- Added deployment-spec section for CI container publishing via GitHub Actions.
+- Defined push-only workflow behavior (Docker Hub publish only, no remote deploy step).
+- Added required Docker Hub secrets and published tag contract (`latest`, `sha-<commit>`).
+- Updated Docker base images to `node:22-alpine` for build and runtime stages and standardized on `npm ci`.
 
 ### 2026-03-13
 
