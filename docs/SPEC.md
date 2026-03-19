@@ -384,14 +384,16 @@ Stored in browser `localStorage`:
 - GitHub Actions workflow file: `.github/workflows/dockerhub-push.yml`
 - Trigger:
   - push to `main`
+  - push of any git tag (`*`)
   - manual run via `workflow_dispatch`
 - Behavior:
   - build Docker image from repository `Dockerfile`
   - push image to Docker Hub only
   - no remote server deployment step in CI
+- Docker image name is set via workflow environment variable `IMAGE_NAME` (current value: `drmsbh/labelsearch`).
 - Published image/tags:
-  - `drmsbh/labelsearch:latest`
-  - `drmsbh/labelsearch:sha-<commit>`
+  - `<IMAGE_NAME>:latest` on `main` branch pushes
+  - `<IMAGE_NAME>:<git-tag>` on git tag pushes
 - Required repository secrets:
   - `DOCKERHUB_USERNAME`
   - `DOCKERHUB_TOKEN`
@@ -417,8 +419,10 @@ Required checks:
 
 - Added deployment-spec section for CI container publishing via GitHub Actions.
 - Defined push-only workflow behavior (Docker Hub publish only, no remote deploy step).
-- Added required Docker Hub secrets and published tag contract (`latest`, `sha-<commit>`).
+- Added required Docker Hub secrets and published tag contract (`latest` on `main`, `<git-tag>` on tag push).
 - Updated Docker base images to `node:22-alpine` for build and runtime stages and standardized on `npm ci`.
+- Updated CI publishing contract: `main` branch publishes `latest`; git tags publish the same tag name.
+- Added workflow-level `IMAGE_NAME` configuration point for Docker Hub repository naming.
 
 ### 2026-03-13
 

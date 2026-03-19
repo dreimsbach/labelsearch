@@ -109,12 +109,14 @@ curl http://localhost:8787/api/health
 
 The repository includes a workflow at `.github/workflows/dockerhub-push.yml` that:
 
-- runs on pushes to `main` (and manually via `workflow_dispatch`)
+- runs on pushes to `main`, on git tag pushes, and manually via `workflow_dispatch`
 - builds the Docker image
 - pushes to Docker Hub only (no server deploy step)
 - publishes tags:
-  - `drmsbh/labelsearch:latest`
-  - `drmsbh/labelsearch:sha-<commit>`
+  - `drmsbh/labelsearch:latest` for `main`
+  - `drmsbh/labelsearch:<git-tag>` for git tag pushes (for example `v1.2.0`)
+
+Docker image name is configured in the workflow via `IMAGE_NAME` (currently `drmsbh/labelsearch`).
 
 Required GitHub repository secrets:
 
@@ -152,9 +154,11 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 ### 2026-03-19
 
 - Added GitHub Actions workflow `.github/workflows/dockerhub-push.yml` for Docker Hub push-only CI.
-- Workflow now builds and pushes `drmsbh/labelsearch` image tags (`latest`, `sha-<commit>`) on `main` pushes and manual dispatch.
+- Workflow now builds and pushes `drmsbh/labelsearch` image tags (`latest` on `main`, `<git-tag>` on tag push).
 - Documented required GitHub Secrets for Docker Hub authentication.
 - Switched Docker build/runtime base images to `node:22-alpine` and `npm ci` for a leaner, reproducible container build.
+- Updated Docker tag strategy: `main` pushes publish `latest`; git tag pushes publish the same tag name.
+- Added workflow-level `IMAGE_NAME` variable to control Docker Hub repository name centrally.
 
 ### 2026-03-13
 
