@@ -178,6 +178,7 @@ export function App(): JSX.Element {
     setError(null);
     setPartialFailures([]);
     setProgress({ current: 0, total: targetLabels.length });
+    setReleases([]);
 
     const combined: Release[] = [];
     const failures: string[] = [];
@@ -196,9 +197,12 @@ export function App(): JSX.Element {
             discogsToken.trim() || undefined
           );
           combined.push(...response.releases);
+          setReleases(dedupeReleases(combined));
           response.meta.partialFailures.forEach((entry) => failures.push(`${entry.label.name}: ${entry.message}`));
+          setPartialFailures([...failures]);
         } catch (searchError) {
           failures.push(`${label.name}: ${searchError instanceof Error ? searchError.message : 'search failed'}`);
+          setPartialFailures([...failures]);
         }
         setProgress({ current: i + 1, total: targetLabels.length });
       }
@@ -439,7 +443,7 @@ Subpop`}
             <p>{releases.length} results</p>
           </div>
 
-          {loading && (
+          {loading && releases.length === 0 && (
             <div className="release-grid">
               {Array.from({ length: 6 }).map((_, index) => (
                 <ReleaseSkeleton key={index} />
@@ -447,9 +451,18 @@ Subpop`}
             </div>
           )}
 
+          {loading && releases.length > 0 && (
+            <div className="loading-more" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              <p>
+                Loading more releases... ({progress.current}/{progress.total})
+              </p>
+            </div>
+          )}
+
           {emptyState && <p className="empty">No releases in this range yet.</p>}
 
-          {!loading && releases.length > 0 && (
+          {releases.length > 0 && (
             <div className="release-grid">
               {releases.map((release) => (
                 <ReleaseCard key={`${release.id}-${release.releaseDate}`} release={release} />

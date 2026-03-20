@@ -36,6 +36,8 @@ Behavior:
 ## 2.3 Required UX States
 
 - Loading state with skeleton cards
+- Incremental result rendering: show available cards immediately while remaining labels are still loading
+- In-results loading indicator signaling that more results are incoming
 - Empty state when no releases found
 - Error state for API/provider failures
 - Progress display for list search/import (`x / n`)
@@ -454,6 +456,7 @@ Required checks:
 - Added Apple link enrichment behavior for `discogs` mode via iTunes matching.
 - Added Discogs rate-limit mitigation rules (request throttling + retries) and clearer partial-failure messaging for `429`.
 - Added optional `discogsToken` request field and UI input; request token takes precedence over env `DISCOGS_TOKEN`.
+- Updated search UX to stream release cards incrementally during multi-label runs and show an in-panel spinner while loading continues.
 
 ### 2026-03-19
 

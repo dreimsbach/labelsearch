@@ -19,6 +19,8 @@ Modern web app to track record-label releases with selectable primary source (**
   - without selected candidate: uses the first label result for input query
   - with selected candidate from result list: button switches to `Search with selected label`
 - Release grid with:
+  - incremental rendering during multi-label searches (cards appear as soon as each label response arrives)
+  - in-panel loading indicator (`Loading more releases...`) while additional results are still being fetched
   - cover
   - artist
   - title
@@ -168,6 +170,7 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Added Apple link enrichment in `discogs` mode via iTunes matching (artist/album links in cards when matched).
 - Added Discogs request throttling + retry behavior for `429` and a clearer user-facing partial-failure message for Discogs rate limits.
 - Added optional Discogs token input in the UI; request token now overrides env token for that search.
+- Multi-label searches now render release cards incrementally and show a spinner hint while more results are still loading.
 
 ### 2026-03-19
 
