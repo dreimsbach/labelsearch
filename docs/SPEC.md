@@ -36,6 +36,8 @@ Behavior:
 ## 2.3 Required UX States
 
 - Loading state with skeleton cards
+- Incremental result rendering: show available cards immediately while remaining labels are still loading
+- In-results loading indicator signaling that more results are incoming
 - Empty state when no releases found
 - Error state for API/provider failures
 - Progress display for list search/import (`x / n`)
@@ -72,10 +74,11 @@ Fields:
   - `days` (default): searches last `rangeValue` days including today
   - `year`: searches full calendar year `rangeValue` (e.g. `2026`)
 - `country` dropdown (default `DE`)
+- `discogsToken` (optional; user-provided request token)
 - `sourceMode` dropdown:
-  - `hybrid` (default)
+  - `discogs` (default)
+  - `hybrid`
   - `musicbrainz`
-  - `itunes`
 
 Date window rule:
 
@@ -96,6 +99,7 @@ Each release card shows:
 - Album title
 - Release date
 - 1-3 genres/microgenres (best effort)
+- styles (when available)
 - Label(s)
 - No additional detail/link section in card UI (core fields only)
 - Apple artist icon link (`music://` desktop app deep link)
@@ -108,7 +112,7 @@ Each release card shows:
 
 - `hybrid`: MusicBrainz as primary source + iTunes/Deezer/Discogs enrichment
 - `musicbrainz`: MusicBrainz only
-- `itunes`: iTunes only (best-effort label matching)
+- `discogs`: Discogs label search as primary source (exact day filtering via release detail endpoint)
 
 ## 4.2 MusicBrainz
 
@@ -152,14 +156,24 @@ Lookup strategy:
 
 Used for:
 
+- Primary label-based release retrieval in `discogs` mode
 - Discogs release link fallback
 - Cover art fallback
+- styles metadata (`styles[]`)
+- track-count extraction (`tracklist[]`)
 
 Lookup strategy:
 
 - staged query fallback: `artist+release_title` -> `release_title` -> `artist`
 - strict candidate acceptance via normalized artist/title + date proximity (`±7` days)
 - `DISCOGS_TOKEN` optional for higher reliability/rate limits
+- in `discogs` mode:
+  - query `/database/search` by `label` + `year` (supports pagination)
+  - fetch `/releases/{id}` per candidate
+  - use `released` (YYYY-MM-DD) for exact window filtering
+  - if `released` is missing/unparseable: exclude in `days` mode; use year fallback (`YYYY-01-01`) in `year` mode
+  - enrich matched entries with Apple artist/album links via iTunes candidate matching when confidence threshold is met
+  - provider requests are queued/throttled and retried for Discogs `429` responses (paced for unauthenticated vs authenticated limits)
 
 ## 4.6 Cover Art Archive (MusicBrainz)
 
@@ -236,6 +250,19 @@ Fallback:
 
 - `Genre unbekannt`
 
+## 5.5 Discogs Type Mapping
+
+For `sourceMode=discogs`, map release type with deterministic rules:
+
+1. Title contains `EP` (word boundary) or format descriptions contain `EP` -> `EP`
+2. Format descriptions contain `Single` or `45 RPM` -> `Single`
+3. If trackCount known:
+   - `<= 2` -> `Single`
+   - `3..6` -> `EP`
+   - `>= 7` -> `Album`
+4. Format descriptions contain `LP` or `Album` -> `Album`
+5. Fallback -> `Single`
+
 ## 6. API Contract
 
 ## 6.1 `GET /api/health`
@@ -279,7 +306,8 @@ Request body:
   "timeValue": 7,
   "country": "DE",
   "sourceMode": "hybrid",
-  "timezone": "Europe/Berlin"
+  "timezone": "Europe/Berlin",
+  "discogsToken": "optional-user-token"
 }
 ```
 
@@ -294,6 +322,7 @@ Response body:
       "title": "News from Planet Zombie",
       "releaseDate": "2026-03-13",
       "genres": ["Indie-Pop"],
+      "styles": ["Deep House", "Tech House"],
       "labels": ["Morr Music"],
       "type": "Album",
       "status": "Official",
@@ -320,7 +349,7 @@ Response body:
       },
       "matchedByLabel": ["Morr Music"],
       "matchConfidence": "high",
-      "matchedBy": "hybrid-deezer"
+      "matchedBy": "discogs"
     }
   ],
   "meta": {
@@ -414,6 +443,18 @@ Required checks:
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-03-20
+
+- Added new source mode `discogs` for primary Discogs label-based release search.
+- Added exact date filtering in Discogs mode using release detail field `released`.
+- Extended release schema with optional `styles` and documented Discogs track-count extraction from `tracklist`.
+- Added deterministic Discogs type inference rules (`Album`/`EP`/`Single`).
+- Updated UI spec to show `Styles` when available on release cards.
+- Added Apple link enrichment behavior for `discogs` mode via iTunes matching.
+- Added Discogs rate-limit mitigation rules (request throttling + retries) and clearer partial-failure messaging for `429`.
+- Added optional `discogsToken` request field and UI input; request token takes precedence over env `DISCOGS_TOKEN`.
+- Updated search UX to stream release cards incrementally during multi-label runs and show an in-panel spinner while loading continues.
 
 ### 2026-03-19
 

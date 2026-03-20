@@ -79,6 +79,7 @@ export function ReleaseCard({ release }: Props): JSX.Element {
         <p className="meta">{release.releaseDate}</p>
         <p className="meta">Label: {release.labels.join(', ')}</p>
         <p className="meta">Genres: {release.genres.join(', ')}</p>
+        {(release.styles?.length ?? 0) > 0 && <p className="meta">Styles: {release.styles?.join(', ')}</p>}
         <div className="links">
           {appleArtistDesktopUrl && (
             <a href={appleArtistDesktopUrl} className="icon-link" aria-label="Apple Artist (App)" title="Apple Artist (App)">

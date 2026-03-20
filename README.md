@@ -1,6 +1,6 @@
 # Label Release Tracker
 
-Modern web app to track record-label releases using **MusicBrainz (label-accurate search)** with multi-source enrichment (**iTunes, Deezer, Discogs**).
+Modern web app to track record-label releases with selectable primary source (**MusicBrainz, Discogs, iTunes**) and enrichment (**iTunes, Deezer, Discogs**).
 
 ## Features
 
@@ -9,19 +9,23 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
   - `Days` mode (default `7`): searches the last N days including today
   - `Year` mode (e.g. `2026`): searches all releases in that year
 - Country dropdown (default `DE`)
+- Optional Discogs token input (per search/session, stored locally)
 - Source mode dropdown:
-  - `hybrid` (default): MusicBrainz search + iTunes enrichment
+  - `discogs` (default): Discogs primary search + iTunes Apple-link enrichment
+  - `hybrid`: MusicBrainz search + iTunes enrichment
   - `musicbrainz`
-  - `itunes`
 - Direct search behavior:
   - without selected candidate: uses the first label result for input query
   - with selected candidate from result list: button switches to `Search with selected label`
 - Release grid with:
+  - incremental rendering during multi-label searches (cards appear as soon as each label response arrives)
+  - in-panel loading indicator (`Loading more releases...`) while additional results are still being fetched
   - cover
   - artist
   - title
   - release date
   - genres (1-3, fallback strategy)
+  - styles (when available from source providers)
   - label(s)
   - intentionally reduced UI detail set (no extra metadata block in cards)
   - Apple Music desktop-app deep links (`music://`) for artist + album when available (icon buttons)
@@ -131,6 +135,7 @@ Required GitHub repository secrets:
 - `LOG_FILE_PATH` (optional; default `./logs/app.log`)
 - `DISCOGS_TOKEN` (optional; improves Discogs rate limits)
 - `DISCOGS_USER_AGENT` (optional; defaults to app User-Agent)
+- Request-level token precedence: token entered in UI (`discogsToken`) is used first; if empty, backend falls back to env `DISCOGS_TOKEN`.
 
 ## API Endpoints
 
@@ -143,6 +148,9 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 ## Notes
 
 - MusicBrainz requests are throttled (~1 req/s).
+- Discogs primary mode (`sourceMode=discogs`) uses label+year search plus release-detail lookups for exact date filtering via `released` (needed for day-level precision).
+- Discogs calls are queued/throttled and retried on `429` (`~25/min` without token, `~60/min` with token target pacing).
+- In Discogs primary mode, Apple artist/album links are additionally generated via iTunes candidate matching when confidence is high.
 - External fallback matching (Deezer/Discogs) uses strict artist/title/date checks (date must be within ±7 days).
 - If enrichment providers fail, MusicBrainz release entries are still shown.
 - Cover selection in `hybrid/musicbrainz` prefers Cover Art Archive by MB release ID to reduce incorrect iTunes artwork matches.
@@ -150,6 +158,19 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-03-20
+
+- Added new primary source mode `discogs` in API and UI (`Discogs only`).
+- Implemented Discogs label search flow with exact date filtering from release detail field `released`.
+- Added Discogs enrichment fields for primary mode: `styles`, `trackCount`, and deterministic type inference (`Album`/`EP`/`Single`).
+- Release cards now render `Styles` when available, alongside `Genres`.
+- Added tests for Discogs primary search behavior (including `Smallville` 2026 and exact-day matching) and Discogs track counting rules.
+- Added Apple link enrichment in `discogs` mode via iTunes matching (artist/album links in cards when matched).
+- Added Discogs request throttling + retry behavior for `429` and a clearer user-facing partial-failure message for Discogs rate limits.
+- Added optional Discogs token input in the UI; request token now overrides env token for that search.
+- Multi-label searches now render release cards incrementally and show a spinner hint while more results are still loading.
+- Switched default source mode to `discogs` and removed user-selectable `itunes only` mode; iTunes remains active for Apple link enrichment.
 
 ### 2026-03-19
 

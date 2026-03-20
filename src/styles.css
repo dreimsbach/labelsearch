@@ -293,6 +293,27 @@ a:focus-visible {
   color: var(--muted);
 }
 
+.loading-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: var(--muted);
+}
+
+.loading-more p {
+  margin: 0;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #c8d7ca;
+  border-top-color: #0d6d4c;
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+}
+
 .release-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -420,6 +441,12 @@ a:focus-visible {
 @keyframes shine {
   to {
     background-position-x: -220%;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

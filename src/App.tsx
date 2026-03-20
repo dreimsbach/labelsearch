@@ -36,6 +36,7 @@ export function App(): JSX.Element {
   const [timeValue, setTimeValue] = useState(initial.timeValue);
   const [country, setCountry] = useState(initial.country);
   const [sourceMode, setSourceMode] = useState<SourceMode>(initial.sourceMode);
+  const [discogsToken, setDiscogsToken] = useState(initial.discogsToken);
 
   const [labelQuery, setLabelQuery] = useState('');
   const [labelSearchResults, setLabelSearchResults] = useState<LabelSearchResult[]>([]);
@@ -55,8 +56,8 @@ export function App(): JSX.Element {
   }, [releases]);
 
   useEffect(() => {
-    saveSettings({ timeMode, timeValue, country, sourceMode });
-  }, [timeMode, timeValue, country, sourceMode]);
+    saveSettings({ timeMode, timeValue, country, sourceMode, discogsToken });
+  }, [timeMode, timeValue, country, sourceMode, discogsToken]);
 
   const canSearch = labels.length > 0 && !loading;
 
@@ -177,6 +178,7 @@ export function App(): JSX.Element {
     setError(null);
     setPartialFailures([]);
     setProgress({ current: 0, total: targetLabels.length });
+    setReleases([]);
 
     const combined: Release[] = [];
     const failures: string[] = [];
@@ -191,12 +193,16 @@ export function App(): JSX.Element {
             timeValue,
             country,
             sourceMode,
-            Intl.DateTimeFormat().resolvedOptions().timeZone
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+            discogsToken.trim() || undefined
           );
           combined.push(...response.releases);
+          setReleases(dedupeReleases(combined));
           response.meta.partialFailures.forEach((entry) => failures.push(`${entry.label.name}: ${entry.message}`));
+          setPartialFailures([...failures]);
         } catch (searchError) {
           failures.push(`${label.name}: ${searchError instanceof Error ? searchError.message : 'search failed'}`);
+          setPartialFailures([...failures]);
         }
         setProgress({ current: i + 1, total: targetLabels.length });
       }
@@ -242,7 +248,7 @@ export function App(): JSX.Element {
     <div className="page">
       <header className="hero">
         <h1>Find releases by record label</h1>
-        <p>MusicBrainz label matching with multi-source enrichment (iTunes, Deezer, Discogs) for links, covers and metadata.</p>
+        <p>Label-based search with selectable primary source (MusicBrainz, Discogs, iTunes) plus enrichment for links, covers and metadata. Slow because of rate limits!</p>
       </header>
 
       <main className="layout">
@@ -332,8 +338,20 @@ Subpop`}
               <select id="source" value={sourceMode} onChange={(event) => setSourceMode(event.target.value as SourceMode)}>
                 <option value="hybrid">Hybrid (MB + iTunes)</option>
                 <option value="musicbrainz">MusicBrainz only</option>
-                <option value="itunes">iTunes only</option>
+                <option value="discogs">Discogs only</option>
               </select>
+            </div>
+
+            <div>
+              <label htmlFor="discogs-token">Discogs Token (optional)</label>
+              <input
+                id="discogs-token"
+                type="password"
+                value={discogsToken}
+                onChange={(event) => setDiscogsToken(event.target.value)}
+                placeholder="Use personal token for higher limits"
+                autoComplete="off"
+              />
             </div>
           </div>
 
@@ -424,7 +442,7 @@ Subpop`}
             <p>{releases.length} results</p>
           </div>
 
-          {loading && (
+          {loading && releases.length === 0 && (
             <div className="release-grid">
               {Array.from({ length: 6 }).map((_, index) => (
                 <ReleaseSkeleton key={index} />
@@ -432,9 +450,18 @@ Subpop`}
             </div>
           )}
 
+          {loading && releases.length > 0 && (
+            <div className="loading-more" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              <p>
+                Loading more releases... ({progress.current}/{progress.total})
+              </p>
+            </div>
+          )}
+
           {emptyState && <p className="empty">No releases in this range yet.</p>}
 
-          {!loading && releases.length > 0 && (
+          {releases.length > 0 && (
             <div className="release-grid">
               {releases.map((release) => (
                 <ReleaseCard key={`${release.id}-${release.releaseDate}`} release={release} />

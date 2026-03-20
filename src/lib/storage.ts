@@ -9,14 +9,23 @@ export interface Settings {
   timeValue: number;
   country: string;
   sourceMode: SourceMode;
+  discogsToken: string;
 }
 
 const defaultSettings: Settings = {
   timeMode: 'days',
   timeValue: 7,
   country: 'DE',
-  sourceMode: 'hybrid'
+  sourceMode: 'discogs',
+  discogsToken: ''
 };
+
+function toSourceMode(value: unknown): SourceMode {
+  if (value === 'hybrid' || value === 'musicbrainz' || value === 'discogs') {
+    return value;
+  }
+  return defaultSettings.sourceMode;
+}
 
 export function loadLabels(): LabelRef[] {
   try {
@@ -46,7 +55,9 @@ export function loadSettings(): Settings {
       ...defaultSettings,
       ...parsed,
       timeMode: parsed.timeMode ?? 'days',
-      timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue
+      timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue,
+      sourceMode: toSourceMode(parsed.sourceMode),
+      discogsToken: typeof parsed.discogsToken === 'string' ? parsed.discogsToken : ''
     };
   } catch {
     return defaultSettings;
