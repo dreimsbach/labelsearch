@@ -1,4 +1,4 @@
-export type SourceMode = 'hybrid' | 'itunes' | 'musicbrainz' | 'discogs';
+export type SourceMode = 'hybrid' | 'musicbrainz' | 'discogs';
 export type TimeMode = 'days' | 'year';
 
 export type ReleaseType = 'Album' | 'Single' | 'EP';

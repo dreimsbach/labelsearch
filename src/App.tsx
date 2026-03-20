@@ -339,7 +339,6 @@ Subpop`}
                 <option value="hybrid">Hybrid (MB + iTunes)</option>
                 <option value="musicbrainz">MusicBrainz only</option>
                 <option value="discogs">Discogs only</option>
-                <option value="itunes">iTunes only</option>
               </select>
             </div>
 

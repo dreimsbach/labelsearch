@@ -11,10 +11,9 @@ Modern web app to track record-label releases with selectable primary source (**
 - Country dropdown (default `DE`)
 - Optional Discogs token input (per search/session, stored locally)
 - Source mode dropdown:
-  - `hybrid` (default): MusicBrainz search + iTunes enrichment
+  - `discogs` (default): Discogs primary search + iTunes Apple-link enrichment
+  - `hybrid`: MusicBrainz search + iTunes enrichment
   - `musicbrainz`
-  - `discogs`
-  - `itunes`
 - Direct search behavior:
   - without selected candidate: uses the first label result for input query
   - with selected candidate from result list: button switches to `Search with selected label`
@@ -171,6 +170,7 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Added Discogs request throttling + retry behavior for `429` and a clearer user-facing partial-failure message for Discogs rate limits.
 - Added optional Discogs token input in the UI; request token now overrides env token for that search.
 - Multi-label searches now render release cards incrementally and show a spinner hint while more results are still loading.
+- Switched default source mode to `discogs` and removed user-selectable `itunes only` mode; iTunes remains active for Apple link enrichment.
 
 ### 2026-03-19
 

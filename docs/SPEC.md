@@ -76,10 +76,9 @@ Fields:
 - `country` dropdown (default `DE`)
 - `discogsToken` (optional; user-provided request token)
 - `sourceMode` dropdown:
-  - `hybrid` (default)
+  - `discogs` (default)
+  - `hybrid`
   - `musicbrainz`
-  - `discogs`
-  - `itunes`
 
 Date window rule:
 
@@ -114,7 +113,6 @@ Each release card shows:
 - `hybrid`: MusicBrainz as primary source + iTunes/Deezer/Discogs enrichment
 - `musicbrainz`: MusicBrainz only
 - `discogs`: Discogs label search as primary source (exact day filtering via release detail endpoint)
-- `itunes`: iTunes only (best-effort label matching)
 
 ## 4.2 MusicBrainz
 

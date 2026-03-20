@@ -577,8 +577,7 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
 
   for (const label of input.labels) {
     try {
-      const mbReleases =
-        input.sourceMode === 'itunes' || input.sourceMode === 'discogs' ? [] : await searchReleasesByLabel(label, fromDate, toDate);
+      const mbReleases = input.sourceMode === 'discogs' ? [] : await searchReleasesByLabel(label, fromDate, toDate);
 
       for (const mbRelease of mbReleases) {
         let mapped = mapBaseRelease(mbRelease, label, input.sourceMode);
@@ -640,76 +639,6 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
         }
       } catch (error) {
         void logWarn('Discogs primary search failed', {
-          label: label.name,
-          message: error instanceof Error ? error.message : String(error)
-        });
-        failures.push({
-          label,
-          message: error instanceof Error ? friendlyProviderError(error.message) : 'Unknown provider error'
-        });
-      }
-    }
-  }
-
-  if (input.sourceMode === 'itunes') {
-    for (const label of input.labels) {
-      try {
-        const candidates = await findItunesCandidates(label.name, '', input.country);
-        for (const candidate of candidates) {
-          const day = candidate.releaseDate?.slice(0, 10);
-          if (!day || day < fromDate || day > toDate) {
-            continue;
-          }
-
-          const mapped: Release = {
-            id: `itunes-${candidate.collectionId}`,
-            artist: candidate.artistName,
-            title: candidate.collectionName,
-            releaseDate: day,
-            genres: resolveGenres(candidate.primaryGenreName, [], []),
-            labels: [label.name],
-            type: mapReleaseType(undefined, [], candidate.collectionType, candidate.collectionName),
-            coverUrl: toHighResArtwork(candidate.artworkUrl100),
-            appleArtistUrl: candidate.artistViewUrl,
-            appleAlbumUrl: candidate.collectionViewUrl,
-            externalLinks: uniqueLinks([
-              ...(candidate.collectionViewUrl
-                ? [
-                    {
-                      label: 'Apple Album',
-                      url: candidate.collectionViewUrl,
-                      source: 'itunes' as const
-                    }
-                  ]
-                : []),
-              ...(candidate.artistViewUrl
-                ? [
-                    {
-                      label: 'Apple Artist',
-                      url: candidate.artistViewUrl,
-                      source: 'itunes' as const
-                    }
-                  ]
-                : [])
-            ]),
-            sourceDetails: {
-              itunesCollectionId: candidate.collectionId
-            },
-            matchedByLabel: [label.name],
-            matchConfidence: 'high',
-            matchedBy: 'itunes'
-          };
-
-          const key = dedupeReleaseKey(mapped.artist, mapped.title, mapped.releaseDate);
-          const current = releaseMap.get(key);
-          if (current) {
-            releaseMap.set(key, mergeRelease(current, mapped, label.name));
-          } else {
-            releaseMap.set(key, mapped);
-          }
-        }
-      } catch (error) {
-        void logWarn('iTunes-only fallback failed', {
           label: label.name,
           message: error instanceof Error ? error.message : String(error)
         });
