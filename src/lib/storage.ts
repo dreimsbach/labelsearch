@@ -18,6 +18,13 @@ const defaultSettings: Settings = {
   sourceMode: 'hybrid'
 };
 
+function toSourceMode(value: unknown): SourceMode {
+  if (value === 'hybrid' || value === 'itunes' || value === 'musicbrainz' || value === 'discogs') {
+    return value;
+  }
+  return defaultSettings.sourceMode;
+}
+
 export function loadLabels(): LabelRef[] {
   try {
     const data = localStorage.getItem(LABELS_KEY);
@@ -46,7 +53,8 @@ export function loadSettings(): Settings {
       ...defaultSettings,
       ...parsed,
       timeMode: parsed.timeMode ?? 'days',
-      timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue
+      timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue,
+      sourceMode: toSourceMode(parsed.sourceMode)
     };
   } catch {
     return defaultSettings;

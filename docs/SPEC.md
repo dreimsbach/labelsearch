@@ -75,6 +75,7 @@ Fields:
 - `sourceMode` dropdown:
   - `hybrid` (default)
   - `musicbrainz`
+  - `discogs`
   - `itunes`
 
 Date window rule:
@@ -96,6 +97,7 @@ Each release card shows:
 - Album title
 - Release date
 - 1-3 genres/microgenres (best effort)
+- styles (when available)
 - Label(s)
 - No additional detail/link section in card UI (core fields only)
 - Apple artist icon link (`music://` desktop app deep link)
@@ -108,6 +110,7 @@ Each release card shows:
 
 - `hybrid`: MusicBrainz as primary source + iTunes/Deezer/Discogs enrichment
 - `musicbrainz`: MusicBrainz only
+- `discogs`: Discogs label search as primary source (exact day filtering via release detail endpoint)
 - `itunes`: iTunes only (best-effort label matching)
 
 ## 4.2 MusicBrainz
@@ -152,14 +155,22 @@ Lookup strategy:
 
 Used for:
 
+- Primary label-based release retrieval in `discogs` mode
 - Discogs release link fallback
 - Cover art fallback
+- styles metadata (`styles[]`)
+- track-count extraction (`tracklist[]`)
 
 Lookup strategy:
 
 - staged query fallback: `artist+release_title` -> `release_title` -> `artist`
 - strict candidate acceptance via normalized artist/title + date proximity (`±7` days)
 - `DISCOGS_TOKEN` optional for higher reliability/rate limits
+- in `discogs` mode:
+  - query `/database/search` by `label` + `year` (supports pagination)
+  - fetch `/releases/{id}` per candidate
+  - use `released` (YYYY-MM-DD) for exact window filtering
+  - if `released` is missing/unparseable: exclude in `days` mode; use year fallback (`YYYY-01-01`) in `year` mode
 
 ## 4.6 Cover Art Archive (MusicBrainz)
 
@@ -236,6 +247,19 @@ Fallback:
 
 - `Genre unbekannt`
 
+## 5.5 Discogs Type Mapping
+
+For `sourceMode=discogs`, map release type with deterministic rules:
+
+1. Title contains `EP` (word boundary) or format descriptions contain `EP` -> `EP`
+2. Format descriptions contain `Single` or `45 RPM` -> `Single`
+3. If trackCount known:
+   - `<= 2` -> `Single`
+   - `3..6` -> `EP`
+   - `>= 7` -> `Album`
+4. Format descriptions contain `LP` or `Album` -> `Album`
+5. Fallback -> `Single`
+
 ## 6. API Contract
 
 ## 6.1 `GET /api/health`
@@ -294,6 +318,7 @@ Response body:
       "title": "News from Planet Zombie",
       "releaseDate": "2026-03-13",
       "genres": ["Indie-Pop"],
+      "styles": ["Deep House", "Tech House"],
       "labels": ["Morr Music"],
       "type": "Album",
       "status": "Official",
@@ -320,7 +345,7 @@ Response body:
       },
       "matchedByLabel": ["Morr Music"],
       "matchConfidence": "high",
-      "matchedBy": "hybrid-deezer"
+      "matchedBy": "discogs"
     }
   ],
   "meta": {
@@ -414,6 +439,14 @@ Required checks:
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-03-20
+
+- Added new source mode `discogs` for primary Discogs label-based release search.
+- Added exact date filtering in Discogs mode using release detail field `released`.
+- Extended release schema with optional `styles` and documented Discogs track-count extraction from `tracklist`.
+- Added deterministic Discogs type inference rules (`Album`/`EP`/`Single`).
+- Updated UI spec to show `Styles` when available on release cards.
 
 ### 2026-03-19
 

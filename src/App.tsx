@@ -242,7 +242,7 @@ export function App(): JSX.Element {
     <div className="page">
       <header className="hero">
         <h1>Find releases by record label</h1>
-        <p>MusicBrainz label matching with multi-source enrichment (iTunes, Deezer, Discogs) for links, covers and metadata.</p>
+        <p>Label-based search with selectable primary source (MusicBrainz, Discogs, iTunes) plus enrichment for links, covers and metadata.</p>
       </header>
 
       <main className="layout">
@@ -332,6 +332,7 @@ Subpop`}
               <select id="source" value={sourceMode} onChange={(event) => setSourceMode(event.target.value as SourceMode)}>
                 <option value="hybrid">Hybrid (MB + iTunes)</option>
                 <option value="musicbrainz">MusicBrainz only</option>
+                <option value="discogs">Discogs only</option>
                 <option value="itunes">iTunes only</option>
               </select>
             </div>

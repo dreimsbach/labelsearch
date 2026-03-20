@@ -3,7 +3,7 @@ import { computeDateRange } from './lib/date.js';
 import { dedupeReleaseKey, mapReleaseType, pickBestExternalMatch, pickBestItunesMatch, resolveGenres } from './lib/match.js';
 import { logWarn } from './lib/logger.js';
 import { findDeezerCandidates } from './providers/deezer.js';
-import { findDiscogsCandidates } from './providers/discogs.js';
+import { fetchDiscogsRelease, findDiscogsCandidates, searchDiscogsByLabelYear } from './providers/discogs.js';
 import { findItunesCandidates } from './providers/itunes.js';
 import { searchReleasesByLabel, type MbRelease } from './providers/musicbrainz.js';
 
@@ -126,6 +126,119 @@ function releaseArtist(release: MbRelease): string {
 
 function releaseDate(release: MbRelease): string {
   return release.date?.slice(0, 10) ?? '0000-00-00';
+}
+
+function validYmd(value?: string): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return value;
+}
+
+function inferDiscogsType(title: string, descriptions: string[], trackTotal?: number): Release['type'] {
+  const lowerTitle = title.toLowerCase();
+  const lowerDescriptions = descriptions.map((entry) => entry.toLowerCase());
+
+  if (/\bep\b/i.test(lowerTitle) || lowerDescriptions.some((entry) => /\bep\b/i.test(entry))) {
+    return 'EP';
+  }
+
+  if (lowerDescriptions.some((entry) => entry.includes('single') || entry.includes('45 rpm'))) {
+    return 'Single';
+  }
+
+  if (typeof trackTotal === 'number') {
+    if (trackTotal <= 2) {
+      return 'Single';
+    }
+    if (trackTotal <= 6) {
+      return 'EP';
+    }
+    return 'Album';
+  }
+
+  if (lowerDescriptions.some((entry) => /\blp\b/i.test(entry) || entry.includes('album'))) {
+    return 'Album';
+  }
+
+  return 'Single';
+}
+
+function discogsReleaseDate(released: string | undefined, fallbackYear: number): string {
+  const parsed = validYmd(released);
+  if (parsed) {
+    return parsed;
+  }
+
+  return `${fallbackYear}-01-01`;
+}
+
+function inDateRange(day: string, fromDate: string, toDate: string): boolean {
+  return day >= fromDate && day <= toDate;
+}
+
+async function collectDiscogsReleasesForLabel(label: LabelRef, fromDate: string, toDate: string, mode: SearchRequest['timeMode']): Promise<Release[]> {
+  const years = new Set<number>([Number(fromDate.slice(0, 4)), Number(toDate.slice(0, 4))]);
+  const releaseIds = new Set<number>();
+
+  for (const year of years) {
+    const entries = await searchDiscogsByLabelYear(label.name, year);
+    entries.forEach((entry) => releaseIds.add(entry.id));
+  }
+
+  const releases: Release[] = [];
+
+  for (const id of releaseIds) {
+    const detail = await fetchDiscogsRelease(id);
+    const releaseYear = detail.year ?? Number(fromDate.slice(0, 4));
+    const releaseDay = discogsReleaseDate(detail.released, releaseYear);
+    const hasExactDate = Boolean(validYmd(detail.released));
+
+    if (mode === 'days' && !hasExactDate) {
+      continue;
+    }
+    if (!inDateRange(releaseDay, fromDate, toDate)) {
+      continue;
+    }
+
+    releases.push({
+      id: `discogs-${detail.id}`,
+      artist: detail.artist,
+      title: detail.title,
+      releaseDate: releaseDay,
+      genres: resolveGenres(undefined, detail.genres, []),
+      styles: detail.styles,
+      labels: [label.name],
+      type: inferDiscogsType(detail.title, detail.formatDescriptions, detail.trackCount),
+      country: detail.country,
+      trackCount: detail.trackCount,
+      coverUrl: detail.thumb,
+      discogsReleaseUrl: detail.uri,
+      externalLinks: uniqueLinks([
+        ...(detail.uri
+          ? [
+              {
+                label: 'Discogs',
+                url: detail.uri,
+                source: 'discogs' as const
+              }
+            ]
+          : [])
+      ]),
+      sourceDetails: {
+        discogsReleaseId: detail.id
+      },
+      matchedByLabel: [label.name],
+      matchConfidence: 'high',
+      matchedBy: 'discogs'
+    });
+  }
+
+  return releases;
 }
 
 function mapBaseRelease(release: MbRelease, label: LabelRef, mode: SearchRequest['sourceMode']): Release {
@@ -297,9 +410,10 @@ function mergeRelease(existing: Release, incoming: Release, labelName: string): 
     const priority: Record<Release['matchedBy'], number> = {
       musicbrainz: 0,
       hybrid: 1,
-      itunes: 2,
-      'hybrid-discogs': 3,
-      'hybrid-deezer': 4
+      discogs: 2,
+      itunes: 3,
+      'hybrid-discogs': 4,
+      'hybrid-deezer': 5
     };
     return priority[incoming.matchedBy] >= priority[existing.matchedBy] ? incoming.matchedBy : existing.matchedBy;
   })();
@@ -312,6 +426,7 @@ function mergeRelease(existing: Release, incoming: Release, labelName: string): 
     appleArtistUrl: existing.appleArtistUrl ?? incoming.appleArtistUrl,
     appleAlbumUrl: existing.appleAlbumUrl ?? incoming.appleAlbumUrl,
     genres: existing.genres.length > 0 ? existing.genres : incoming.genres,
+    styles: (existing.styles?.length ?? 0) > 0 ? existing.styles : incoming.styles,
     status: existing.status ?? incoming.status,
     country: existing.country ?? incoming.country,
     barcode: existing.barcode ?? incoming.barcode,
@@ -338,7 +453,8 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
 
   for (const label of input.labels) {
     try {
-      const mbReleases = input.sourceMode === 'itunes' ? [] : await searchReleasesByLabel(label, fromDate, toDate);
+      const mbReleases =
+        input.sourceMode === 'itunes' || input.sourceMode === 'discogs' ? [] : await searchReleasesByLabel(label, fromDate, toDate);
 
       for (const mbRelease of mbReleases) {
         let mapped = mapBaseRelease(mbRelease, label, input.sourceMode);
@@ -375,6 +491,32 @@ export async function findReleases(input: SearchRequest): Promise<SearchResult> 
         label,
         message: error instanceof Error ? error.message : 'Unknown provider error'
       });
+    }
+  }
+
+  if (input.sourceMode === 'discogs') {
+    for (const label of input.labels) {
+      try {
+        const discogsReleases = await collectDiscogsReleasesForLabel(label, fromDate, toDate, input.timeMode);
+        for (const mapped of discogsReleases) {
+          const key = dedupeReleaseKey(mapped.artist, mapped.title, mapped.releaseDate);
+          const current = releaseMap.get(key);
+          if (current) {
+            releaseMap.set(key, mergeRelease(current, mapped, label.name));
+          } else {
+            releaseMap.set(key, mapped);
+          }
+        }
+      } catch (error) {
+        void logWarn('Discogs primary search failed', {
+          label: label.name,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        failures.push({
+          label,
+          message: error instanceof Error ? error.message : 'Unknown provider error'
+        });
+      }
     }
   }
 

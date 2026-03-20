@@ -1,6 +1,6 @@
 # Label Release Tracker
 
-Modern web app to track record-label releases using **MusicBrainz (label-accurate search)** with multi-source enrichment (**iTunes, Deezer, Discogs**).
+Modern web app to track record-label releases with selectable primary source (**MusicBrainz, Discogs, iTunes**) and enrichment (**iTunes, Deezer, Discogs**).
 
 ## Features
 
@@ -12,6 +12,7 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
 - Source mode dropdown:
   - `hybrid` (default): MusicBrainz search + iTunes enrichment
   - `musicbrainz`
+  - `discogs`
   - `itunes`
 - Direct search behavior:
   - without selected candidate: uses the first label result for input query
@@ -22,6 +23,7 @@ Modern web app to track record-label releases using **MusicBrainz (label-accurat
   - title
   - release date
   - genres (1-3, fallback strategy)
+  - styles (when available from source providers)
   - label(s)
   - intentionally reduced UI detail set (no extra metadata block in cards)
   - Apple Music desktop-app deep links (`music://`) for artist + album when available (icon buttons)
@@ -143,6 +145,7 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 ## Notes
 
 - MusicBrainz requests are throttled (~1 req/s).
+- Discogs primary mode (`sourceMode=discogs`) uses label+year search plus release-detail lookups for exact date filtering via `released` (needed for day-level precision).
 - External fallback matching (Deezer/Discogs) uses strict artist/title/date checks (date must be within ±7 days).
 - If enrichment providers fail, MusicBrainz release entries are still shown.
 - Cover selection in `hybrid/musicbrainz` prefers Cover Art Archive by MB release ID to reduce incorrect iTunes artwork matches.
@@ -150,6 +153,14 @@ Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repo
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-03-20
+
+- Added new primary source mode `discogs` in API and UI (`Discogs only`).
+- Implemented Discogs label search flow with exact date filtering from release detail field `released`.
+- Added Discogs enrichment fields for primary mode: `styles`, `trackCount`, and deterministic type inference (`Album`/`EP`/`Single`).
+- Release cards now render `Styles` when available, alongside `Genres`.
+- Added tests for Discogs primary search behavior (including `Smallville` 2026 and exact-day matching) and Discogs track counting rules.
 
 ### 2026-03-19
 

@@ -1,4 +1,4 @@
-export type SourceMode = 'hybrid' | 'itunes' | 'musicbrainz';
+export type SourceMode = 'hybrid' | 'itunes' | 'musicbrainz' | 'discogs';
 export type TimeMode = 'days' | 'year';
 
 export type ReleaseType = 'Album' | 'Single' | 'EP';
@@ -28,6 +28,7 @@ export interface Release {
   title: string;
   releaseDate: string;
   genres: string[];
+  styles?: string[];
   labels: string[];
   type: ReleaseType;
   status?: string;
@@ -55,7 +56,7 @@ export interface Release {
   };
   matchedByLabel: string[];
   matchConfidence: 'high' | 'none';
-  matchedBy: 'itunes' | 'musicbrainz' | 'hybrid' | 'hybrid-deezer' | 'hybrid-discogs';
+  matchedBy: 'itunes' | 'musicbrainz' | 'hybrid' | 'hybrid-deezer' | 'hybrid-discogs' | 'discogs';
 }
 
 export interface SearchResponse {

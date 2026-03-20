@@ -61,6 +61,7 @@ export function dedupeReleases(releases: Release[]): Release[] {
       labels: [...new Set([...current.labels, ...release.labels])],
       matchedByLabel: [...new Set([...current.matchedByLabel, ...release.matchedByLabel])],
       genres: current.genres.length > 0 ? current.genres : release.genres,
+      styles: (current.styles?.length ?? 0) > 0 ? current.styles : release.styles,
       status: current.status ?? release.status,
       country: current.country ?? release.country,
       barcode: current.barcode ?? release.barcode,
