@@ -88,7 +88,8 @@ app.post('/api/releases/search', async (req, res) => {
       timeValue: value,
       country: (input.country || 'DE').toUpperCase(),
       sourceMode: input.sourceMode ?? 'hybrid',
-      timezone: input.timezone || 'Europe/Berlin'
+      timezone: input.timezone || 'Europe/Berlin',
+      discogsToken: typeof input.discogsToken === 'string' && input.discogsToken.trim() ? input.discogsToken.trim() : undefined
     });
 
     const payload: SearchResponse = {

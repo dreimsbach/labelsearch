@@ -28,6 +28,7 @@ vi.mock('./lib/logger.js', () => ({
 
 import { findReleases } from './release-service.js';
 import { fetchDiscogsRelease, searchDiscogsByLabelYear } from './providers/discogs.js';
+import { findItunesCandidates } from './providers/itunes.js';
 
 describe('findReleases discogs mode', () => {
   beforeEach(() => {
@@ -158,6 +159,72 @@ describe('findReleases discogs mode', () => {
     expect(result.partialFailures).toHaveLength(1);
     expect(result.partialFailures[0].label.name).toBe('Smallville');
     expect(result.partialFailures[0].message).toContain('Discogs down');
+  });
+
+  it('maps Discogs 429 errors to a friendly message', async () => {
+    vi.mocked(searchDiscogsByLabelYear).mockRejectedValue(
+      new Error('HTTP 429 for https://api.discogs.com/database/search?type=release&page=1')
+    );
+
+    const result = await findReleases({
+      labels: [{ mbid: 'mb-smallville', name: 'Smallville' }],
+      timeMode: 'year',
+      timeValue: 2026,
+      country: 'DE',
+      sourceMode: 'discogs',
+      timezone: 'Europe/Berlin'
+    });
+
+    expect(result.partialFailures).toHaveLength(1);
+    expect(result.partialFailures[0].message).toContain('Discogs rate limit reached');
+    expect(result.partialFailures[0].message).toContain('DISCOGS_TOKEN');
+  });
+
+  it('adds Apple links in discogs mode when iTunes match exists', async () => {
+    vi.mocked(searchDiscogsByLabelYear).mockResolvedValue([{ id: 36798148 }] as Array<{ id: number }>);
+    vi.mocked(fetchDiscogsRelease).mockResolvedValue({
+      id: 36798148,
+      title: 'Poppies',
+      artist: 'Lawrence',
+      released: '2026-03-20',
+      year: 2026,
+      country: 'Germany',
+      uri: 'https://www.discogs.com/release/36798148-Lawrence-Poppies',
+      thumb: 'https://example.com/poppies.jpg',
+      genres: ['Electronic'],
+      styles: ['Minimal'],
+      formatDescriptions: ['12"', '33 ⅓ RPM'],
+      trackCount: 4
+    });
+
+    vi.mocked(findItunesCandidates).mockResolvedValue([
+      {
+        collectionId: 100,
+        artistName: 'Lawrence',
+        collectionName: 'Poppies - EP',
+        releaseDate: '2026-03-20',
+        artistViewUrl: 'https://music.apple.com/artist/lawrence/1',
+        collectionViewUrl: 'https://music.apple.com/album/poppies/2',
+        artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/a/b/c/100x100bb.jpg'
+      }
+    ]);
+
+    const result = await findReleases({
+      labels: [{ mbid: 'mb-smallville', name: 'Smallville' }],
+      timeMode: 'year',
+      timeValue: 2026,
+      country: 'DE',
+      sourceMode: 'discogs',
+      timezone: 'Europe/Berlin'
+    });
+
+    expect(result.releases).toHaveLength(1);
+    expect(result.releases[0].appleArtistUrl).toContain('music.apple.com/artist/lawrence');
+    expect(result.releases[0].appleAlbumUrl).toContain('music.apple.com/album/poppies');
+    expect(result.releases[0].sourceDetails.itunesCollectionId).toBe(100);
+    const labels = (result.releases[0].externalLinks ?? []).map((entry) => entry.label);
+    expect(labels).toContain('Apple Artist');
+    expect(labels).toContain('Apple Album');
   });
 
   it('infers release type from Discogs rules', async () => {

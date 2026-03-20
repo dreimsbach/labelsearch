@@ -16,7 +16,8 @@ export async function searchReleasesForLabels(
   timeValue: number,
   country: string,
   sourceMode: SourceMode,
-  timezone: string
+  timezone: string,
+  discogsToken?: string
 ): Promise<SearchResponse> {
   const response = await fetch('/api/releases/search', {
     method: 'POST',
@@ -29,7 +30,8 @@ export async function searchReleasesForLabels(
       timeValue,
       country,
       sourceMode,
-      timezone
+      timezone,
+      discogsToken
     })
   });
 

@@ -36,6 +36,7 @@ export function App(): JSX.Element {
   const [timeValue, setTimeValue] = useState(initial.timeValue);
   const [country, setCountry] = useState(initial.country);
   const [sourceMode, setSourceMode] = useState<SourceMode>(initial.sourceMode);
+  const [discogsToken, setDiscogsToken] = useState(initial.discogsToken);
 
   const [labelQuery, setLabelQuery] = useState('');
   const [labelSearchResults, setLabelSearchResults] = useState<LabelSearchResult[]>([]);
@@ -55,8 +56,8 @@ export function App(): JSX.Element {
   }, [releases]);
 
   useEffect(() => {
-    saveSettings({ timeMode, timeValue, country, sourceMode });
-  }, [timeMode, timeValue, country, sourceMode]);
+    saveSettings({ timeMode, timeValue, country, sourceMode, discogsToken });
+  }, [timeMode, timeValue, country, sourceMode, discogsToken]);
 
   const canSearch = labels.length > 0 && !loading;
 
@@ -191,7 +192,8 @@ export function App(): JSX.Element {
             timeValue,
             country,
             sourceMode,
-            Intl.DateTimeFormat().resolvedOptions().timeZone
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+            discogsToken.trim() || undefined
           );
           combined.push(...response.releases);
           response.meta.partialFailures.forEach((entry) => failures.push(`${entry.label.name}: ${entry.message}`));
@@ -335,6 +337,18 @@ Subpop`}
                 <option value="discogs">Discogs only</option>
                 <option value="itunes">iTunes only</option>
               </select>
+            </div>
+
+            <div>
+              <label htmlFor="discogs-token">Discogs Token (optional)</label>
+              <input
+                id="discogs-token"
+                type="password"
+                value={discogsToken}
+                onChange={(event) => setDiscogsToken(event.target.value)}
+                placeholder="Use personal token for higher limits"
+                autoComplete="off"
+              />
             </div>
           </div>
 

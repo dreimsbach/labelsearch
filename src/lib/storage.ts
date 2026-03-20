@@ -9,13 +9,15 @@ export interface Settings {
   timeValue: number;
   country: string;
   sourceMode: SourceMode;
+  discogsToken: string;
 }
 
 const defaultSettings: Settings = {
   timeMode: 'days',
   timeValue: 7,
   country: 'DE',
-  sourceMode: 'hybrid'
+  sourceMode: 'hybrid',
+  discogsToken: ''
 };
 
 function toSourceMode(value: unknown): SourceMode {
@@ -54,7 +56,8 @@ export function loadSettings(): Settings {
       ...parsed,
       timeMode: parsed.timeMode ?? 'days',
       timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue,
-      sourceMode: toSourceMode(parsed.sourceMode)
+      sourceMode: toSourceMode(parsed.sourceMode),
+      discogsToken: typeof parsed.discogsToken === 'string' ? parsed.discogsToken : ''
     };
   } catch {
     return defaultSettings;

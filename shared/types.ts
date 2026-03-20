@@ -15,6 +15,7 @@ export interface SearchRequest {
   country: string;
   sourceMode: SourceMode;
   timezone: string;
+  discogsToken?: string;
 }
 
 export interface LabelFailure {

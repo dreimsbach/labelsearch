@@ -72,6 +72,7 @@ Fields:
   - `days` (default): searches last `rangeValue` days including today
   - `year`: searches full calendar year `rangeValue` (e.g. `2026`)
 - `country` dropdown (default `DE`)
+- `discogsToken` (optional; user-provided request token)
 - `sourceMode` dropdown:
   - `hybrid` (default)
   - `musicbrainz`
@@ -171,6 +172,8 @@ Lookup strategy:
   - fetch `/releases/{id}` per candidate
   - use `released` (YYYY-MM-DD) for exact window filtering
   - if `released` is missing/unparseable: exclude in `days` mode; use year fallback (`YYYY-01-01`) in `year` mode
+  - enrich matched entries with Apple artist/album links via iTunes candidate matching when confidence threshold is met
+  - provider requests are queued/throttled and retried for Discogs `429` responses (paced for unauthenticated vs authenticated limits)
 
 ## 4.6 Cover Art Archive (MusicBrainz)
 
@@ -303,7 +306,8 @@ Request body:
   "timeValue": 7,
   "country": "DE",
   "sourceMode": "hybrid",
-  "timezone": "Europe/Berlin"
+  "timezone": "Europe/Berlin",
+  "discogsToken": "optional-user-token"
 }
 ```
 
@@ -447,6 +451,9 @@ Required checks:
 - Extended release schema with optional `styles` and documented Discogs track-count extraction from `tracklist`.
 - Added deterministic Discogs type inference rules (`Album`/`EP`/`Single`).
 - Updated UI spec to show `Styles` when available on release cards.
+- Added Apple link enrichment behavior for `discogs` mode via iTunes matching.
+- Added Discogs rate-limit mitigation rules (request throttling + retries) and clearer partial-failure messaging for `429`.
+- Added optional `discogsToken` request field and UI input; request token takes precedence over env `DISCOGS_TOKEN`.
 
 ### 2026-03-19
 
