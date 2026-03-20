@@ -248,7 +248,7 @@ export function App(): JSX.Element {
     <div className="page">
       <header className="hero">
         <h1>Find releases by record label</h1>
-        <p>Label-based search with selectable primary source (MusicBrainz, Discogs, iTunes) plus enrichment for links, covers and metadata.</p>
+        <p>Label-based search with selectable primary source (MusicBrainz, Discogs, iTunes) plus enrichment for links, covers and metadata. Slow because of rate limits!</p>
       </header>
 
       <main className="layout">
