@@ -1,13 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { LabelRef, LabelSearchResult, Release, SourceMode, TimeMode } from '../shared/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { mergeReleases } from '../shared/merge';
+import type { LabelRef, LabelSearchResult, Release, SourceId, TimeMode } from '../shared/types';
 import { LabelChip } from './components/LabelChip';
 import { ReleaseCard } from './components/ReleaseCard';
 import { ReleaseSkeleton } from './components/ReleaseSkeleton';
-import { searchLabels, searchReleasesForLabels, dedupeReleases } from './lib/api';
+import { searchLabels, streamReleases } from './lib/api';
 import { parseLabelText } from './lib/csv';
-import { loadLabels, loadResults, loadSettings, saveLabels, saveResults, saveSettings } from './lib/storage';
+import { labelKey, loadLabels, loadResults, loadSettings, saveLabels, saveResults, saveSettings } from './lib/storage';
 
 const COUNTRIES = ['DE', 'US', 'GB', 'FR', 'JP'];
+
+const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
+  { id: 'deezer', label: 'Deezer', hint: 'fastest, best for new digital releases' },
+  { id: 'musicbrainz', label: 'MusicBrainz', hint: 'curated, exact label IDs' },
+  { id: 'discogs', label: 'Discogs', hint: 'vinyl-only labels, slow' }
+];
 
 function formatLabelChoice(label: LabelSearchResult): string {
   const info = [label.country, label.disambiguation].filter(Boolean).join(' · ');
@@ -35,7 +42,7 @@ export function App(): JSX.Element {
   const [timeMode, setTimeMode] = useState<TimeMode>(initial.timeMode);
   const [timeValue, setTimeValue] = useState(initial.timeValue);
   const [country, setCountry] = useState(initial.country);
-  const [sourceMode, setSourceMode] = useState<SourceMode>(initial.sourceMode);
+  const [sources, setSources] = useState<SourceId[]>(initial.sources);
   const [discogsToken, setDiscogsToken] = useState(initial.discogsToken);
 
   const [labelQuery, setLabelQuery] = useState('');
@@ -46,6 +53,7 @@ export function App(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [partialFailures, setPartialFailures] = useState<string[]>([]);
+  const searchAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     saveLabels(labels);
@@ -56,10 +64,14 @@ export function App(): JSX.Element {
   }, [releases]);
 
   useEffect(() => {
-    saveSettings({ timeMode, timeValue, country, sourceMode, discogsToken });
-  }, [timeMode, timeValue, country, sourceMode, discogsToken]);
+    saveSettings({ timeMode, timeValue, country, sources, discogsToken });
+  }, [timeMode, timeValue, country, sources, discogsToken]);
 
-  const canSearch = labels.length > 0 && !loading;
+  const canSearch = labels.length > 0 && !loading && sources.length > 0;
+
+  function toggleSource(source: SourceId): void {
+    setSources((prev) => (prev.includes(source) ? prev.filter((entry) => entry !== source) : [...prev, source]));
+  }
 
   function exportLabelsList(): void {
     if (labels.length === 0) {
@@ -136,31 +148,34 @@ export function App(): JSX.Element {
       setProgress({ current: 0, total: names.length });
 
       const resolved: LabelRef[] = [];
-      const unresolved: string[] = [];
+      const nameOnly: string[] = [];
 
       for (let i = 0; i < names.length; i += 1) {
         const entry = names[i];
-        try {
-          const label = await resolveLabelName(entry);
-          if (label) {
-            resolved.push(label);
-          } else {
-            unresolved.push(entry);
-          }
-        } catch {
-          unresolved.push(entry);
+        // Labels without a MusicBrainz match are kept by name: Deezer and Discogs search by name anyway.
+        const label = await resolveLabelName(entry).catch(() => null);
+        if (label) {
+          resolved.push(label);
+        } else {
+          resolved.push({ name: entry });
+          nameOnly.push(entry);
         }
 
         setProgress({ current: i + 1, total: names.length });
       }
 
-      if (unresolved.length > 0) {
-        setPartialFailures(unresolved.map((entry) => `No MBID match for "${entry}"`));
+      if (nameOnly.length > 0) {
+        setPartialFailures(nameOnly.map((entry) => `"${entry}" not found on MusicBrainz, kept as name-only label`));
       }
 
       setLabels((prev) => {
-        const map = new Map(prev.map((item) => [item.mbid, item]));
-        resolved.forEach((entry) => map.set(entry.mbid, entry));
+        const map = new Map(prev.map((item) => [labelKey(item), item]));
+        resolved.forEach((entry) => {
+          const duplicate = [...map.values()].some((item) => item.name.toLowerCase() === entry.name.toLowerCase());
+          if (!map.has(labelKey(entry)) && !duplicate) {
+            map.set(labelKey(entry), entry);
+          }
+        });
         return [...map.values()];
       });
     } finally {
@@ -170,9 +185,13 @@ export function App(): JSX.Element {
   }
 
   async function runSearch(targetLabels: LabelRef[]): Promise<void> {
-    if (targetLabels.length === 0) {
+    if (targetLabels.length === 0 || sources.length === 0) {
       return;
     }
+
+    searchAbort.current?.abort();
+    const controller = new AbortController();
+    searchAbort.current = controller;
 
     setLoading(true);
     setError(null);
@@ -180,39 +199,59 @@ export function App(): JSX.Element {
     setProgress({ current: 0, total: targetLabels.length });
     setReleases([]);
 
-    const combined: Release[] = [];
+    // Keyed per label so the same album found for two labels keeps both label names.
+    const byKey = new Map<string, Release>();
     const failures: string[] = [];
 
     try {
-      for (let i = 0; i < targetLabels.length; i += 1) {
-        const label = targetLabels[i];
-        try {
-          const response = await searchReleasesForLabels(
-            [label],
-            timeMode,
-            timeValue,
-            country,
-            sourceMode,
-            Intl.DateTimeFormat().resolvedOptions().timeZone,
-            discogsToken.trim() || undefined
-          );
-          combined.push(...response.releases);
-          setReleases(dedupeReleases(combined));
-          response.meta.partialFailures.forEach((entry) => failures.push(`${entry.label.name}: ${entry.message}`));
-          setPartialFailures([...failures]);
-        } catch (searchError) {
-          failures.push(`${label.name}: ${searchError instanceof Error ? searchError.message : 'search failed'}`);
-          setPartialFailures([...failures]);
-        }
-        setProgress({ current: i + 1, total: targetLabels.length });
+      await streamReleases(
+        {
+          labels: targetLabels,
+          timeMode,
+          timeValue,
+          country,
+          sources,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          discogsToken: sources.includes('discogs') ? discogsToken.trim() || undefined : undefined
+        },
+        (event) => {
+          switch (event.type) {
+            case 'releases':
+              event.releases.forEach((release) => byKey.set(`${labelKey(event.label)}::${release.id}`, release));
+              setReleases(mergeReleases([...byKey.values()]));
+              break;
+            case 'failure':
+              failures.push(`${event.failure.label.name}: ${event.failure.message}`);
+              setPartialFailures([...failures]);
+              break;
+            case 'labelDone':
+              setProgress({ current: event.completed, total: event.totalLabels });
+              break;
+            case 'error':
+              setError(event.message);
+              break;
+            default:
+              break;
+          }
+        },
+        controller.signal
+      );
+    } catch (searchError) {
+      if (!controller.signal.aborted) {
+        setError(searchError instanceof Error ? searchError.message : 'Search failed');
       }
-
-      const merged = dedupeReleases(combined);
-      setReleases(merged);
-      setPartialFailures(failures);
     } finally {
-      setLoading(false);
+      if (searchAbort.current === controller) {
+        searchAbort.current = null;
+        setLoading(false);
+      }
     }
+  }
+
+  function cancelSearch(): void {
+    searchAbort.current?.abort();
+    searchAbort.current = null;
+    setLoading(false);
   }
 
   async function searchDirectly(): Promise<void> {
@@ -248,7 +287,7 @@ export function App(): JSX.Element {
     <div className="page">
       <header className="hero">
         <h1>Find releases by record label</h1>
-        <p>Label-based search with selectable primary source (MusicBrainz, Discogs, iTunes) plus enrichment for links, covers and metadata. Slow because of rate limits!</p>
+        <p>Finds new releases of your labels via Deezer and MusicBrainz (optionally Discogs), enriched with Apple Music links. Results stream in label by label.</p>
       </header>
 
       <main className="layout">
@@ -257,7 +296,7 @@ export function App(): JSX.Element {
             <summary>Instructions & import format</summary>
             <ol>
               <li>Search a label and add it to your list, or upload a label file.</li>
-              <li>Set range value + mode (Days or Year), country, and source mode.</li>
+              <li>Set range value + mode (Days or Year), country, and sources.</li>
               <li>Use direct search or search all labels from your list.</li>
             </ol>
             <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
@@ -282,11 +321,9 @@ Subpop`}
             />
           </div>
 
-          <div className="input-row grid-row">
+          <div className="input-row grid-row grid-row-3">
             <div>
-              <label htmlFor="time-value" className="label-placeholder">
-                Value
-              </label>
+              <label htmlFor="time-value">Range</label>
               <input
                 id="time-value"
                 type="number"
@@ -301,7 +338,7 @@ Subpop`}
             </div>
 
             <div>
-              <label htmlFor="range-mode">Day/Year Switch</label>
+              <label htmlFor="range-mode">Unit</label>
               <select
                 id="range-mode"
                 aria-label="Range mode"
@@ -332,41 +369,62 @@ Subpop`}
                 ))}
               </select>
             </div>
+          </div>
 
-            <div>
-              <label htmlFor="source">Source</label>
-              <select id="source" value={sourceMode} onChange={(event) => setSourceMode(event.target.value as SourceMode)}>
-                <option value="hybrid">Hybrid (MB + iTunes)</option>
-                <option value="musicbrainz">MusicBrainz only</option>
-                <option value="discogs">Discogs only</option>
-              </select>
+          <fieldset className="source-picker">
+            <legend>Sources</legend>
+            <div className="source-chips">
+              {SOURCE_OPTIONS.map((option) => {
+                const active = sources.includes(option.id);
+                return (
+                  <label key={option.id} className={`source-chip ${active ? 'active' : ''}`} title={option.hint}>
+                    <input type="checkbox" checked={active} onChange={() => toggleSource(option.id)} />
+                    <span aria-hidden="true" className="source-chip-mark">
+                      {active ? '✓' : '+'}
+                    </span>
+                    {option.label}
+                  </label>
+                );
+              })}
             </div>
+            <p className="source-hint">
+              {SOURCE_OPTIONS.map((option) => `${option.label}: ${option.hint}`).join(' · ')}
+            </p>
+            {sources.length === 0 && <p className="error">Select at least one source.</p>}
+          </fieldset>
 
-            <div>
+          {sources.includes('discogs') && (
+            <div className="input-row">
               <label htmlFor="discogs-token">Discogs Token (optional)</label>
               <input
                 id="discogs-token"
                 type="password"
                 value={discogsToken}
                 onChange={(event) => setDiscogsToken(event.target.value)}
-                placeholder="Use personal token for higher limits"
+                placeholder="Personal token for higher Discogs limits"
                 autoComplete="off"
               />
             </div>
-          </div>
+          )}
 
           <div className="button-row button-row-main">
             <button
               type="button"
               className="btn primary"
               onClick={searchDirectly}
-              disabled={loading || (!labelQuery.trim() && !selectedSearchResult)}
+              disabled={loading || sources.length === 0 || (!labelQuery.trim() && !selectedSearchResult)}
             >
               {selectedSearchResult ? 'Search with selected label' : 'Search directly'}
             </button>
-            <button className="btn primary" type="button" onClick={() => runSearch(labels)} disabled={!canSearch}>
-              Find from list
-            </button>
+            {loading ? (
+              <button className="btn secondary" type="button" onClick={cancelSearch}>
+                Cancel
+              </button>
+            ) : (
+              <button className="btn primary" type="button" onClick={() => runSearch(labels)} disabled={!canSearch}>
+                Find from list
+              </button>
+            )}
           </div>
 
           <div className="button-row button-row-secondary">
@@ -417,7 +475,11 @@ Subpop`}
             <h2>Label list ({labels.length})</h2>
             <div className="chips">
               {labels.map((label) => (
-                <LabelChip key={label.mbid} label={label} onRemove={(mbid) => setLabels((prev) => prev.filter((entry) => entry.mbid !== mbid))} />
+                <LabelChip
+                  key={labelKey(label)}
+                  label={label}
+                  onRemove={(removed) => setLabels((prev) => prev.filter((entry) => labelKey(entry) !== labelKey(removed)))}
+                />
               ))}
             </div>
           </div>

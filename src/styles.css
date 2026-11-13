@@ -149,10 +149,6 @@ select {
   min-width: 0;
 }
 
-.label-placeholder {
-  visibility: hidden;
-}
-
 input:focus,
 select:focus,
 button:focus-visible,
@@ -255,6 +251,93 @@ a:focus-visible {
   background: white;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+.label-chip.name-only {
+  border-style: dashed;
+}
+
+.grid-row-3 {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.source-picker {
+  border: 0;
+  padding: 0;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+
+.source-picker legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 14px 7px 10px;
+  background: #fff;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.source-chip:hover {
+  border-color: var(--primary);
+}
+
+.source-chip input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.source-chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+}
+
+.source-chip:has(input:focus-visible) {
+  outline: 3px solid rgba(14, 159, 110, 0.35);
+  outline-offset: 2px;
+}
+
+.source-chip-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.source-chip.active .source-chip-mark {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.source-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .progress,
@@ -479,6 +562,10 @@ a:focus-visible {
 
   .grid-row {
     grid-template-columns: 1fr;
+  }
+
+  .grid-row-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .grid-row > * {
