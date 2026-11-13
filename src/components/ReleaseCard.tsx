@@ -3,6 +3,7 @@ import type { Release } from '../../shared/types';
 
 interface Props {
   release: Release;
+  isNew?: boolean;
 }
 
 const APPLE_MUSIC_ICON_URL =
@@ -24,7 +25,7 @@ function toAppleDesktopUrl(url?: string): string | undefined {
   return url.startsWith('https://music.apple.com/') ? url.replace('https://', 'music://') : url;
 }
 
-export function ReleaseCard({ release }: Props): JSX.Element {
+export function ReleaseCard({ release, isNew = false }: Props): JSX.Element {
   const [copied, setCopied] = useState(false);
   const imageUrl = normalizeCoverUrl(release.coverUrl);
   const appleArtistDesktopUrl = toAppleDesktopUrl(release.appleArtistUrl);
@@ -59,8 +60,9 @@ export function ReleaseCard({ release }: Props): JSX.Element {
   }
 
   return (
-    <article className="release-card">
+    <article className={`release-card ${isNew ? 'is-new' : ''}`}>
       <div className="cover-wrap">
+        {isNew && <span className="new-badge">New</span>}
         {imageUrl ? (
           <img
             src={imageUrl}

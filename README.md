@@ -1,10 +1,18 @@
 # Label Release Tracker
 
-Modern web app to find new releases of your record labels. Primary sources: **Deezer** and **MusicBrainz** (optional **Discogs** for vinyl-only labels), enriched with **iTunes** (Apple Music links, genre) and **Cover Art Archive**.
+Personal web app that checks your record labels for new releases every day. Open the page and you see what came out, with "New" marking everything found since your last visit. Primary sources: **Deezer** and **MusicBrainz** (optional **Discogs** for vinyl-only labels), enriched with **iTunes** (Apple Music links, genre) and **Cover Art Archive**.
+
+It is a single-user app without its own login: run it behind a reverse proxy with Basic Auth or in a private network.
 
 ## Features
 
-- Label management with MusicBrainz MBID resolution; labels without a MusicBrainz match are kept by name (dashed chip) and still searched on Deezer/Discogs
+- Daily background refresh (default 06:00 Europe/Berlin, configurable) with catch-up after downtime; the page shows the latest snapshot immediately
+- `New` badges for releases found since your last visit, plus `updated …` / `next refresh …` info
+- `Refresh now` for an on-demand run (progress shown, previous results stay visible until it finishes)
+- Label list and settings stored on the server (`data/state.json`), so every browser/device sees the same feed
+- Label import from file: `Add from file` (extend the list) or `Replace from file` (swap the list), plus export, single add/remove and `Clear all`
+- Label management with MusicBrainz MBID resolution (exact name matches only); labels without a match are kept by name (dashed chip) and still searched on Deezer/Discogs
+- `Search directly`: one-off search for a single label without changing the feed
 - Search window config with selector:
   - `Days` mode (default `7`): searches the last N days including today
   - `Year` mode (e.g. `2026`): searches all releases in that year
@@ -12,16 +20,13 @@ Modern web app to find new releases of your record labels. Primary sources: **De
 - Source toggle chips (multi-select, one row):
   - `Deezer` (default on): fast, best coverage for new digital releases
   - `MusicBrainz` (default on): curated, exact label IDs
-  - `Discogs` (default off): for vinyl-only labels; slow and lags for brand-new releases. Optional token input appears when selected.
-- One streamed search request: cards appear label by label and get Apple links/covers as soon as enrichment finishes; `Cancel` stops a running search
+  - `Discogs` (default off): for vinyl-only labels; slow and lags for brand-new releases. Token via server env `DISCOGS_TOKEN`.
 - Duplicate releases across sources and labels are merged into one card (title + artist, featured artists and ` - EP` suffixes tolerated, dates within 14 days)
 - Partial failures are shown per label and source; one failing source never hides results of the others
 - Server-side provider cache (persisted to `data/cache.json`): a repeated search is answered almost instantly
 - Release grid with cover, artist, title, release date, genres (1-3), styles (Discogs), label(s)
 - Apple Music desktop-app deep links (`music://`) for artist + album when available, otherwise a copy `Artist + Album` button
-- TXT/CSV upload for batch label import (line-based, supports comment lines starting with `#`)
-- Export of current label list as `.txt` in import-compatible format (includes comment header)
-- Local persistence via `localStorage`
+- Import format: line-based TXT/CSV, comment lines start with `#`; export uses the same format
 - Responsive UI for desktop/tablet/mobile
 - Collapsible on-page instruction section explaining workflow and import format
 
@@ -36,6 +41,8 @@ Per label, all selected sources run in parallel:
 Every provider has its own rate limiter (Deezer 40/5 s, MusicBrainz 1/1.1 s, iTunes 20/min, Discogs 55/min with token, 22/min without). Throttling responses pause that provider and are retried with `Retry-After`/backoff.
 
 Measured on 2026-11-13 (four releases out that day on Erased Tapes, Nonesuch, Latency, CINTH): Deezer + MusicBrainz found 3/4 in ~21 s for all four labels; the old Discogs-only mode found 0/4. CINTH's EP is only on Apple Music, whose label API needs a paid Apple Developer account.
+
+A full refresh of a 66-label list took ~4.6 min on a cold cache with 0 failures; since it runs in the background, the page itself always loads instantly.
 
 ## Tech Stack
 
@@ -103,7 +110,12 @@ Then open `http://localhost:8787`.
 
 Image build/runtime uses `node:22-alpine` (multi-stage) to keep the final container smaller.
 
-The provider cache lives in `/app/data` (`CACHE_FILE_PATH=/app/data/cache.json`); `docker-compose.yml` mounts the named volume `labelsearch-data` there so it survives restarts.
+Persistent data lives in `/app/data`; `docker-compose.yml` mounts the named volume `labelsearch-data` there so it survives restarts:
+
+- `state.json` (`STATE_FILE_PATH`): label list, settings, latest results
+- `cache.json` (`CACHE_FILE_PATH`): provider cache
+
+The daily refresh time is set with `SCHEDULE_TIME` / `SCHEDULE_TIMEZONE` in `docker-compose.yml`. For the Discogs source, uncomment `DISCOGS_TOKEN` there.
 
 ### Health Check
 
@@ -138,17 +150,23 @@ Required GitHub repository secrets:
 - `DISCOGS_TOKEN` (optional; improves Discogs rate limits)
 - `DISCOGS_USER_AGENT` (optional; defaults to the neutral placeholder `example-app/0.0.0`)
 - `CACHE_FILE_PATH` (optional; default `./data/cache.json`, `/app/data/cache.json` in the container; set to an empty value to keep the cache in memory only)
+- `STATE_FILE_PATH` (optional; default `./data/state.json`, `/app/data/state.json` in the container): label list, settings and latest results
+- `SCHEDULE_TIME` (optional; default `06:00`; `off` disables the daily refresh)
+- `SCHEDULE_TIMEZONE` (optional; default `Europe/Berlin`): timezone for the schedule and the date window of feed runs
 - Default User-Agents deliberately contain no traceable data (no e-mail, repo link, URL or name). Set your own value via env only if you want to.
-- Request-level token precedence: token entered in UI (`discogsToken`) is used first; if empty, backend falls back to env `DISCOGS_TOKEN`.
+- The Discogs token is server configuration (`DISCOGS_TOKEN`); the API still accepts a per-request `discogsToken` override.
 
 ## API Endpoints
 
 - `GET /api/health`
 - `GET /api/labels/search?q=<term>&limit=<n>`
-- `POST /api/releases/stream` (NDJSON event stream, used by the UI)
-- `POST /api/releases/search` (same search, single JSON response)
+- `GET /api/feed` (labels, settings, latest snapshot, run progress, schedule)
+- `PUT /api/feed/config` (`{ labels?, settings? }`)
+- `POST /api/feed/run` (start a refresh now)
+- `POST /api/releases/stream` (direct search, NDJSON event stream)
+- `POST /api/releases/search` (direct search, single JSON response)
 
-Request body: `{ labels: [{ name, mbid? }], timeMode, timeValue, country, sources: ["deezer","musicbrainz","discogs"], timezone, discogsToken? }`. The legacy `sourceMode` field is still accepted.
+Direct-search request body: `{ labels: [{ name, mbid? }], timeMode, timeValue, country, sources: ["deezer","musicbrainz","discogs"], timezone, discogsToken? }`. The legacy `sourceMode` field is still accepted.
 
 Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
@@ -161,6 +179,17 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-11-13 (Daily feed)
+
+- The app now refreshes your label list every day in the background (`SCHEDULE_TIME`, default 06:00 Europe/Berlin) and shows the latest results immediately when you open it; `Refresh now` runs it on demand.
+- Label list and settings are stored on the server (`STATE_FILE_PATH`, Docker volume `/app/data`); existing labels from the browser are moved there automatically on first load.
+- `New` badges for releases found since your last visit.
+- Label import can add to (`Add from file`) or replace (`Replace from file`) the list; replacing and clearing ask for confirmation.
+- Imported names are only linked to a MusicBrainz label on an exact name match; otherwise they are kept by name.
+- `Search directly` stays available as a one-off search next to the feed.
+- Discogs token moved from the UI to the server env `DISCOGS_TOKEN`.
+- Label names with special characters (e.g. `o*rs`) no longer break the MusicBrainz lookup.
 
 ### 2026-11-13 (Release v0.3.0)
 

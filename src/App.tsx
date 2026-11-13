@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { mergeReleases } from '../shared/merge';
-import type { LabelRef, LabelSearchResult, Release, SourceId, TimeMode } from '../shared/types';
+import type { FeedSettings, FeedState, LabelRef, LabelSearchResult, Release, SourceId, TimeMode } from '../shared/types';
 import { LabelChip } from './components/LabelChip';
 import { ReleaseCard } from './components/ReleaseCard';
 import { ReleaseSkeleton } from './components/ReleaseSkeleton';
-import { searchLabels, streamReleases } from './lib/api';
+import { getFeed, searchLabels, startFeedRun, streamReleases, updateFeedConfig } from './lib/api';
 import { parseLabelText } from './lib/csv';
-import { labelKey, loadLabels, loadResults, loadSettings, saveLabels, saveResults, saveSettings } from './lib/storage';
+import { labelKey, markLegacyMigrated, takeLastVisit, takeLegacyConfig } from './lib/storage';
 
 const COUNTRIES = ['DE', 'US', 'GB', 'FR', 'JP'];
+const POLL_RUNNING_MS = 2_000;
+const POLL_IDLE_MS = 60_000;
+const SETTINGS_SAVE_DELAY_MS = 500;
 
 const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
   { id: 'deezer', label: 'Deezer', hint: 'fastest, best for new digital releases' },
@@ -16,61 +19,153 @@ const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
   { id: 'discogs', label: 'Discogs', hint: 'vinyl-only labels, slow' }
 ];
 
+const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+interface AdhocSearch {
+  label: LabelRef;
+  releases: Release[];
+  failures: string[];
+  loading: boolean;
+}
+
+type ImportMode = 'add' | 'replace';
+
 function formatLabelChoice(label: LabelSearchResult): string {
   const info = [label.country, label.disambiguation].filter(Boolean).join(' · ');
   return info ? `${label.name} (${info})` : label.name;
 }
 
+/** Exact name match only (country breaks ties); otherwise the label is kept by name. */
 function pickBestLabelCandidate(candidates: LabelSearchResult[], query: string, country: string): LabelSearchResult | null {
   const normalized = query.trim().toLowerCase();
   const exact = candidates.filter((entry) => entry.name.toLowerCase() === normalized);
-  if (exact.length === 1) {
-    return exact[0];
+  return exact.find((entry) => entry.country === country) ?? exact[0] ?? null;
+}
+
+function mergeLabelLists(current: LabelRef[], incoming: LabelRef[]): LabelRef[] {
+  const result = [...current];
+  for (const entry of incoming) {
+    const exists = result.some((item) => labelKey(item) === labelKey(entry) || item.name.toLowerCase() === entry.name.toLowerCase());
+    if (!exists) {
+      result.push(entry);
+    }
   }
-  const countryMatch = exact.find((entry) => entry.country === country);
-  if (countryMatch) {
-    return countryMatch;
+  return result;
+}
+
+function formatNextRun(feed: FeedState): string | null {
+  const { schedule } = feed;
+  if (!schedule.enabled || !schedule.nextRunDay) {
+    return null;
   }
-  return candidates[0] ?? null;
+  return `next refresh ${dayFormat.format(new Date(`${schedule.nextRunDay}T12:00:00Z`))}, ${schedule.time}`;
 }
 
 export function App(): JSX.Element {
-  const [labels, setLabels] = useState<LabelRef[]>(() => loadLabels());
-  const [releases, setReleases] = useState<Release[]>(() => loadResults());
-
-  const initial = loadSettings();
-  const [timeMode, setTimeMode] = useState<TimeMode>(initial.timeMode);
-  const [timeValue, setTimeValue] = useState(initial.timeValue);
-  const [country, setCountry] = useState(initial.country);
-  const [sources, setSources] = useState<SourceId[]>(initial.sources);
-  const [discogsToken, setDiscogsToken] = useState(initial.discogsToken);
+  const [feed, setFeed] = useState<FeedState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [previousVisit] = useState<string | null>(() => takeLastVisit());
+  const [adhoc, setAdhoc] = useState<AdhocSearch | null>(null);
 
   const [labelQuery, setLabelQuery] = useState('');
   const [labelSearchResults, setLabelSearchResults] = useState<LabelSearchResult[]>([]);
   const [selectedSearchResult, setSelectedSearchResult] = useState<LabelSearchResult | null>(null);
 
-  const [loading, setLoading] = useState(false);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [partialFailures, setPartialFailures] = useState<string[]>([]);
-  const searchAbort = useRef<AbortController | null>(null);
+  const [notices, setNotices] = useState<string[]>([]);
 
+  const adhocAbort = useRef<AbortController | null>(null);
+  const settingsTimer = useRef<number | undefined>(undefined);
+
+  const loaded = feed !== null;
+  const running = feed?.run.running ?? false;
+  const importing = importProgress.total > 0;
+  const labels = feed?.labels ?? [];
+  const settings = feed?.settings;
+
+  // Initial load, including the one-time move of browser-stored labels to the server.
   useEffect(() => {
-    saveLabels(labels);
-  }, [labels]);
+    void (async () => {
+      try {
+        let state = await getFeed();
+        const legacy = takeLegacyConfig();
+        if (legacy && state.labels.length === 0) {
+          state = await updateFeedConfig(legacy);
+        }
+        markLegacyMigrated();
+        setFeed(state);
+      } catch (loadFailure) {
+        setLoadError(loadFailure instanceof Error ? loadFailure.message : 'Could not load feed');
+      }
+    })();
+  }, []);
 
+  // Poll quickly while a refresh runs, slowly otherwise to pick up the daily run.
+  // Labels and settings stay local: they may hold edits that are still being saved.
   useEffect(() => {
-    saveResults(releases);
-  }, [releases]);
+    if (!loaded) {
+      return undefined;
+    }
+    const timer = window.setInterval(
+      () => {
+        getFeed()
+          .then((state) => setFeed((prev) => (prev ? { ...state, labels: prev.labels, settings: prev.settings } : state)))
+          .catch(() => undefined);
+      },
+      running ? POLL_RUNNING_MS : POLL_IDLE_MS
+    );
+    return () => window.clearInterval(timer);
+  }, [loaded, running]);
 
-  useEffect(() => {
-    saveSettings({ timeMode, timeValue, country, sources, discogsToken });
-  }, [timeMode, timeValue, country, sources, discogsToken]);
+  async function saveLabels(next: LabelRef[]): Promise<void> {
+    setFeed((prev) => (prev ? { ...prev, labels: next } : prev));
+    try {
+      const state = await updateFeedConfig({ labels: next });
+      setFeed((prev) => (prev ? { ...prev, labels: state.labels } : state));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not save labels');
+    }
+  }
 
-  const canSearch = labels.length > 0 && !loading && sources.length > 0;
+  function changeSettings(patch: Partial<FeedSettings>): void {
+    if (!settings) {
+      return;
+    }
+    const next = { ...settings, ...patch };
+    setFeed((prev) => (prev ? { ...prev, settings: next } : prev));
+    window.clearTimeout(settingsTimer.current);
+    settingsTimer.current = window.setTimeout(() => {
+      updateFeedConfig({ settings: next }).catch((saveError) =>
+        setError(saveError instanceof Error ? saveError.message : 'Could not save settings')
+      );
+    }, SETTINGS_SAVE_DELAY_MS);
+  }
 
   function toggleSource(source: SourceId): void {
-    setSources((prev) => (prev.includes(source) ? prev.filter((entry) => entry !== source) : [...prev, source]));
+    if (!settings) {
+      return;
+    }
+    const sources = settings.sources.includes(source) ? settings.sources.filter((entry) => entry !== source) : [...settings.sources, source];
+    if (sources.length > 0) {
+      changeSettings({ sources });
+    }
+  }
+
+  async function refreshNow(): Promise<void> {
+    setError(null);
+    closeAdhoc();
+    try {
+      // Settings edits may still sit in the debounce timer; save them before the run reads them.
+      if (settings) {
+        window.clearTimeout(settingsTimer.current);
+        await updateFeedConfig({ settings });
+      }
+      setFeed(await startFeedRun());
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : 'Could not start refresh');
+    }
   }
 
   function exportLabelsList(): void {
@@ -111,127 +206,77 @@ export function App(): JSX.Element {
   }
 
   function addSelectedToList(): void {
-    if (!selectedSearchResult) {
-      return;
-    }
-
-    const exists = labels.some((entry) => entry.mbid === selectedSearchResult.id);
-    if (exists) {
-      return;
-    }
-
-    setLabels((prev) => [...prev, { mbid: selectedSearchResult.id, name: selectedSearchResult.name }]);
-  }
-
-  async function resolveLabelName(name: string): Promise<LabelRef | null> {
-    const candidates = await searchLabels(name);
-    const chosen = pickBestLabelCandidate(candidates, name, country);
-    if (!chosen) {
-      return null;
-    }
-
-    return {
-      mbid: chosen.id,
-      name: chosen.name
-    };
-  }
-
-  async function uploadFile(file: File): Promise<void> {
-    try {
-      const text = await file.text();
-      const names = parseLabelText(text);
-      if (names.length === 0) {
-        return;
-      }
-
-      setLoading(true);
-      setProgress({ current: 0, total: names.length });
-
-      const resolved: LabelRef[] = [];
-      const nameOnly: string[] = [];
-
-      for (let i = 0; i < names.length; i += 1) {
-        const entry = names[i];
-        // Labels without a MusicBrainz match are kept by name: Deezer and Discogs search by name anyway.
-        const label = await resolveLabelName(entry).catch(() => null);
-        if (label) {
-          resolved.push(label);
-        } else {
-          resolved.push({ name: entry });
-          nameOnly.push(entry);
-        }
-
-        setProgress({ current: i + 1, total: names.length });
-      }
-
-      if (nameOnly.length > 0) {
-        setPartialFailures(nameOnly.map((entry) => `"${entry}" not found on MusicBrainz, kept as name-only label`));
-      }
-
-      setLabels((prev) => {
-        const map = new Map(prev.map((item) => [labelKey(item), item]));
-        resolved.forEach((entry) => {
-          const duplicate = [...map.values()].some((item) => item.name.toLowerCase() === entry.name.toLowerCase());
-          if (!map.has(labelKey(entry)) && !duplicate) {
-            map.set(labelKey(entry), entry);
-          }
-        });
-        return [...map.values()];
-      });
-    } finally {
-      setLoading(false);
-      setProgress({ current: 0, total: 0 });
+    if (selectedSearchResult) {
+      void saveLabels(mergeLabelLists(labels, [{ mbid: selectedSearchResult.id, name: selectedSearchResult.name }]));
     }
   }
 
-  async function runSearch(targetLabels: LabelRef[]): Promise<void> {
-    if (targetLabels.length === 0 || sources.length === 0) {
+  async function resolveLabelName(name: string): Promise<LabelRef> {
+    const candidates = await searchLabels(name).catch(() => []);
+    const chosen = pickBestLabelCandidate(candidates, name, settings?.country ?? 'DE');
+    // Without an exact MusicBrainz match the label is kept by name: Deezer and Discogs search by name anyway.
+    return chosen ? { mbid: chosen.id, name: chosen.name } : { name };
+  }
+
+  async function importFile(file: File, mode: ImportMode): Promise<void> {
+    const names = parseLabelText(await file.text());
+    if (names.length === 0) {
+      setError('No labels found in file');
+      return;
+    }
+    if (mode === 'replace' && labels.length > 0 && !window.confirm(`Replace all ${labels.length} labels with ${names.length} labels from "${file.name}"?`)) {
       return;
     }
 
-    searchAbort.current?.abort();
-    const controller = new AbortController();
-    searchAbort.current = controller;
-
-    setLoading(true);
     setError(null);
-    setPartialFailures([]);
-    setProgress({ current: 0, total: targetLabels.length });
-    setReleases([]);
+    setNotices([]);
+    setImportProgress({ current: 0, total: names.length });
 
-    // Keyed per label so the same album found for two labels keeps both label names.
-    const byKey = new Map<string, Release>();
-    const failures: string[] = [];
+    try {
+      const resolved: LabelRef[] = [];
+      for (let i = 0; i < names.length; i += 1) {
+        resolved.push(await resolveLabelName(names[i]));
+        setImportProgress({ current: i + 1, total: names.length });
+      }
 
+      const nameOnly = resolved.filter((entry) => !entry.mbid).map((entry) => entry.name);
+      if (nameOnly.length > 0) {
+        setNotices([`Not found on MusicBrainz, kept by name (${nameOnly.length}): ${nameOnly.join(', ')}`]);
+      }
+      await saveLabels(mode === 'replace' ? mergeLabelLists([], resolved) : mergeLabelLists(labels, resolved));
+    } finally {
+      setImportProgress({ current: 0, total: 0 });
+    }
+  }
+
+  function clearLabels(): void {
+    if (window.confirm(`Remove all ${labels.length} labels?`)) {
+      void saveLabels([]);
+    }
+  }
+
+  async function runAdhocSearch(label: LabelRef): Promise<void> {
+    if (!settings) {
+      return;
+    }
+    adhocAbort.current?.abort();
+    const controller = new AbortController();
+    adhocAbort.current = controller;
+    setError(null);
+    setAdhoc({ label, releases: [], failures: [], loading: true });
+
+    const byId = new Map<string, Release>();
     try {
       await streamReleases(
-        {
-          labels: targetLabels,
-          timeMode,
-          timeValue,
-          country,
-          sources,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          discogsToken: sources.includes('discogs') ? discogsToken.trim() || undefined : undefined
-        },
+        { labels: [label], ...settings, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
         (event) => {
-          switch (event.type) {
-            case 'releases':
-              event.releases.forEach((release) => byKey.set(`${labelKey(event.label)}::${release.id}`, release));
-              setReleases(mergeReleases([...byKey.values()]));
-              break;
-            case 'failure':
-              failures.push(`${event.failure.label.name}: ${event.failure.message}`);
-              setPartialFailures([...failures]);
-              break;
-            case 'labelDone':
-              setProgress({ current: event.completed, total: event.totalLabels });
-              break;
-            case 'error':
-              setError(event.message);
-              break;
-            default:
-              break;
+          if (event.type === 'releases') {
+            event.releases.forEach((release) => byId.set(release.id, release));
+            setAdhoc((prev) => (prev ? { ...prev, releases: mergeReleases([...byId.values()]) } : prev));
+          } else if (event.type === 'failure') {
+            setAdhoc((prev) => (prev ? { ...prev, failures: [...prev.failures, event.failure.message] } : prev));
+          } else if (event.type === 'error') {
+            setError(event.message);
           }
         },
         controller.signal
@@ -241,63 +286,77 @@ export function App(): JSX.Element {
         setError(searchError instanceof Error ? searchError.message : 'Search failed');
       }
     } finally {
-      if (searchAbort.current === controller) {
-        searchAbort.current = null;
-        setLoading(false);
+      if (adhocAbort.current === controller) {
+        adhocAbort.current = null;
+        setAdhoc((prev) => (prev ? { ...prev, loading: false } : prev));
       }
     }
   }
 
-  function cancelSearch(): void {
-    searchAbort.current?.abort();
-    searchAbort.current = null;
-    setLoading(false);
+  function closeAdhoc(): void {
+    adhocAbort.current?.abort();
+    adhocAbort.current = null;
+    setAdhoc(null);
   }
 
   async function searchDirectly(): Promise<void> {
     if (selectedSearchResult) {
-      await runSearch([{ mbid: selectedSearchResult.id, name: selectedSearchResult.name }]);
+      await runAdhocSearch({ mbid: selectedSearchResult.id, name: selectedSearchResult.name });
       return;
     }
-
     if (!labelQuery.trim()) {
       return;
     }
-
     try {
-      const found = await searchLabels(labelQuery.trim());
-      const selected = found[0] ?? null;
-
+      const selected = (await searchLabels(labelQuery.trim()))[0];
       if (!selected) {
-        setError('No label found for direct search');
+        // Unknown on MusicBrainz: still search Deezer/Discogs by name.
+        await runAdhocSearch({ name: labelQuery.trim() });
         return;
       }
-
       setSelectedSearchResult(selected);
-      const labelRef = { mbid: selected.id, name: selected.name };
-      await runSearch([labelRef]);
+      await runAdhocSearch({ mbid: selected.id, name: selected.name });
     } catch (directError) {
       setError(directError instanceof Error ? directError.message : 'Direct search failed');
     }
   }
 
-  const emptyState = useMemo(() => !loading && releases.length === 0, [loading, releases.length]);
+  const feedReleases = useMemo(() => feed?.snapshot?.releases ?? feed?.run.releases ?? [], [feed]);
+  const releases = adhoc ? adhoc.releases : feedReleases;
+  const isNew = (release: Release): boolean =>
+    !adhoc && Boolean(previousVisit && release.firstSeenAt && release.firstSeenAt > previousVisit);
+  const newCount = adhoc ? 0 : feedReleases.filter(isNew).length;
+  const feedFailures = running ? (feed?.run.failures ?? []) : (feed?.snapshot?.meta.partialFailures ?? []);
+  const showSkeleton = releases.length === 0 && (adhoc ? adhoc.loading : running || !loaded);
+  const nextRun = feed ? formatNextRun(feed) : null;
+
+  if (loadError) {
+    return (
+      <div className="page">
+        <p className="error">{loadError}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
       <header className="hero">
-        <h1>Find releases by record label</h1>
-        <p>Finds new releases of your labels via Deezer and MusicBrainz (optionally Discogs), enriched with Apple Music links. Results stream in label by label.</p>
+        <h1>New releases from your labels</h1>
+        <p>
+          Checked automatically via Deezer and MusicBrainz (optionally Discogs), with Apple Music links
+          {feed?.schedule.enabled ? `; refreshed every day at ${feed.schedule.time}.` : '.'}
+        </p>
       </header>
 
       <main className="layout">
-        <section className="panel controls" aria-label="Search controls">
+        <section className="panel controls" aria-label="Labels and settings">
           <details className="instructions-collapsible" aria-label="Instructions">
-            <summary>Instructions & import format</summary>
+            <summary>How it works & import format</summary>
             <ol>
-              <li>Search a label and add it to your list, or upload a label file.</li>
-              <li>Set range value + mode (Days or Year), country, and sources.</li>
-              <li>Use direct search or search all labels from your list.</li>
+              <li>Build your label list: search and add labels, or import a file (add to or replace the list).</li>
+              <li>Pick range, country and sources. They are saved and used by the daily refresh.</li>
+              <li>Open the page any time to see the latest results. "New" marks releases found since your last visit.</li>
+              <li>"Search directly" runs a one-off search for a single label without changing the feed.</li>
             </ol>
             <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
             <pre>
@@ -317,142 +376,24 @@ Subpop`}
                 setLabelQuery(event.target.value);
                 setSelectedSearchResult(null);
               }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void runLabelLookup(labelQuery);
+                }
+              }}
               placeholder="Enter music label"
             />
           </div>
 
-          <div className="input-row grid-row grid-row-3">
-            <div>
-              <label htmlFor="time-value">Range</label>
-              <input
-                id="time-value"
-                type="number"
-                min={timeMode === 'days' ? 1 : 1900}
-                max={timeMode === 'days' ? 3650 : 2100}
-                value={timeValue}
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  setTimeValue(Number.isFinite(next) && next > 0 ? Math.trunc(next) : timeMode === 'days' ? 7 : new Date().getFullYear());
-                }}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="range-mode">Unit</label>
-              <select
-                id="range-mode"
-                aria-label="Range mode"
-                value={timeMode}
-                onChange={(event) => {
-                  const nextMode = event.target.value as TimeMode;
-                  setTimeMode(nextMode);
-                  if (nextMode === 'days' && (timeValue < 1 || timeValue > 3650)) {
-                    setTimeValue(7);
-                  }
-                  if (nextMode === 'year' && (timeValue < 1900 || timeValue > 2100)) {
-                    setTimeValue(new Date().getFullYear());
-                  }
-                }}
-              >
-                <option value="days">Days</option>
-                <option value="year">Year</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="country">Country</label>
-              <select id="country" value={country} onChange={(event) => setCountry(event.target.value)}>
-                {COUNTRIES.map((entry) => (
-                  <option key={entry} value={entry}>
-                    {entry}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <fieldset className="source-picker">
-            <legend>Sources</legend>
-            <div className="source-chips">
-              {SOURCE_OPTIONS.map((option) => {
-                const active = sources.includes(option.id);
-                return (
-                  <label key={option.id} className={`source-chip ${active ? 'active' : ''}`} title={option.hint}>
-                    <input type="checkbox" checked={active} onChange={() => toggleSource(option.id)} />
-                    <span aria-hidden="true" className="source-chip-mark">
-                      {active ? '✓' : '+'}
-                    </span>
-                    {option.label}
-                  </label>
-                );
-              })}
-            </div>
-            <p className="source-hint">
-              {SOURCE_OPTIONS.map((option) => `${option.label}: ${option.hint}`).join(' · ')}
-            </p>
-            {sources.length === 0 && <p className="error">Select at least one source.</p>}
-          </fieldset>
-
-          {sources.includes('discogs') && (
-            <div className="input-row">
-              <label htmlFor="discogs-token">Discogs Token (optional)</label>
-              <input
-                id="discogs-token"
-                type="password"
-                value={discogsToken}
-                onChange={(event) => setDiscogsToken(event.target.value)}
-                placeholder="Personal token for higher Discogs limits"
-                autoComplete="off"
-              />
-            </div>
-          )}
-
-          <div className="button-row button-row-main">
-            <button
-              type="button"
-              className="btn primary"
-              onClick={searchDirectly}
-              disabled={loading || sources.length === 0 || (!labelQuery.trim() && !selectedSearchResult)}
-            >
-              {selectedSearchResult ? 'Search with selected label' : 'Search directly'}
-            </button>
-            {loading ? (
-              <button className="btn secondary" type="button" onClick={cancelSearch}>
-                Cancel
-              </button>
-            ) : (
-              <button className="btn primary" type="button" onClick={() => runSearch(labels)} disabled={!canSearch}>
-                Find from list
-              </button>
-            )}
-          </div>
-
           <div className="button-row button-row-secondary">
-            <button type="button" className="btn secondary" onClick={() => runLabelLookup(labelQuery)}>
+            <button type="button" className="btn secondary" onClick={() => runLabelLookup(labelQuery)} disabled={!labelQuery.trim()}>
               Find label
             </button>
-            <button type="button" className="btn secondary" onClick={addSelectedToList} disabled={!selectedSearchResult}>
+            <button type="button" className="btn secondary" onClick={addSelectedToList} disabled={!selectedSearchResult || !loaded}>
               Add to list
             </button>
-            <label className="btn secondary file-btn">
-              Upload List
-              <input
-                type="file"
-                accept=".txt,.csv,text/plain,text/csv"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    void uploadFile(file);
-                    event.target.value = '';
-                  }
-                }}
-              />
-            </label>
-            <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
-              Export List
-            </button>
-            <button className="btn danger subtle" type="button" onClick={() => setLabels([])} disabled={loading || labels.length === 0}>
-              Clear all
+            <button type="button" className="btn secondary" onClick={searchDirectly} disabled={!loaded || (!labelQuery.trim() && !selectedSearchResult)}>
+              {selectedSearchResult ? 'Search selected label' : 'Search directly'}
             </button>
           </div>
 
@@ -471,40 +412,201 @@ Subpop`}
             </div>
           )}
 
-          <div>
+          {settings && (
+            <>
+              <div className="input-row grid-row grid-row-3">
+                <div>
+                  <label htmlFor="time-value">Range</label>
+                  <input
+                    id="time-value"
+                    type="number"
+                    min={settings.timeMode === 'days' ? 1 : 1900}
+                    max={settings.timeMode === 'days' ? 3650 : 2100}
+                    value={settings.timeValue}
+                    onChange={(event) => {
+                      const next = Math.trunc(Number(event.target.value));
+                      if (Number.isFinite(next) && next > 0) {
+                        changeSettings({ timeValue: next });
+                      }
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="range-mode">Unit</label>
+                  <select
+                    id="range-mode"
+                    value={settings.timeMode}
+                    onChange={(event) => {
+                      const timeMode = event.target.value as TimeMode;
+                      changeSettings({ timeMode, timeValue: timeMode === 'days' ? 7 : new Date().getFullYear() });
+                    }}
+                  >
+                    <option value="days">Days</option>
+                    <option value="year">Year</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="country">Country</label>
+                  <select id="country" value={settings.country} onChange={(event) => changeSettings({ country: event.target.value })}>
+                    {COUNTRIES.map((entry) => (
+                      <option key={entry} value={entry}>
+                        {entry}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <fieldset className="source-picker">
+                <legend>Sources</legend>
+                <div className="source-chips">
+                  {SOURCE_OPTIONS.map((option) => {
+                    const active = settings.sources.includes(option.id);
+                    return (
+                      <label key={option.id} className={`source-chip ${active ? 'active' : ''}`} title={option.hint}>
+                        <input type="checkbox" checked={active} onChange={() => toggleSource(option.id)} />
+                        <span aria-hidden="true" className="source-chip-mark">
+                          {active ? '✓' : '+'}
+                        </span>
+                        {option.label}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="source-hint">
+                  {SOURCE_OPTIONS.map((option) => `${option.label}: ${option.hint}`).join(' · ')}
+                  {settings.sources.includes('discogs') &&
+                    !feed?.discogsTokenConfigured &&
+                    '. Discogs runs without a token; set DISCOGS_TOKEN on the server for higher limits.'}
+                </p>
+              </fieldset>
+            </>
+          )}
+
+          <div className="label-list">
             <h2>Label list ({labels.length})</h2>
+            <div className="button-row button-row-secondary">
+              <label className={`btn secondary file-btn ${importing || !loaded ? 'disabled' : ''}`}>
+                Add from file
+                <input
+                  type="file"
+                  accept=".txt,.csv,text/plain,text/csv"
+                  disabled={importing || !loaded}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      void importFile(file, 'add');
+                      event.target.value = '';
+                    }
+                  }}
+                />
+              </label>
+              <label className={`btn secondary file-btn ${importing || !loaded ? 'disabled' : ''}`}>
+                Replace from file
+                <input
+                  type="file"
+                  accept=".txt,.csv,text/plain,text/csv"
+                  disabled={importing || !loaded}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      void importFile(file, 'replace');
+                      event.target.value = '';
+                    }
+                  }}
+                />
+              </label>
+              <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
+                Export
+              </button>
+              <button className="btn danger subtle" type="button" onClick={clearLabels} disabled={importing || labels.length === 0}>
+                Clear all
+              </button>
+            </div>
+            {importing && (
+              <p className="progress">
+                Resolving labels on MusicBrainz: {importProgress.current} / {importProgress.total}
+              </p>
+            )}
             <div className="chips">
               {labels.map((label) => (
                 <LabelChip
                   key={labelKey(label)}
                   label={label}
-                  onRemove={(removed) => setLabels((prev) => prev.filter((entry) => labelKey(entry) !== labelKey(removed)))}
+                  onRemove={(removed) => void saveLabels(labels.filter((entry) => labelKey(entry) !== labelKey(removed)))}
                 />
               ))}
             </div>
           </div>
 
-          {progress.total > 0 && (
-            <p className="progress">Progress: {progress.current} / {progress.total}</p>
-          )}
-
           {error && <p className="error">{error}</p>}
-          {partialFailures.length > 0 && (
+          {notices.length > 0 && (
             <ul className="warning-list">
-              {partialFailures.map((failure) => (
-                <li key={failure}>{failure}</li>
+              {notices.map((notice) => (
+                <li key={notice}>{notice}</li>
               ))}
             </ul>
+          )}
+          {!adhoc && feedFailures.length > 0 && (
+            <details className="failure-details">
+              <summary>{feedFailures.length} source problem(s) in the last refresh</summary>
+              <ul className="warning-list">
+                {feedFailures.map((failure, index) => (
+                  <li key={`${failure.label.name}-${index}`}>
+                    {failure.label.name}: {failure.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </section>
 
         <section className="panel releases" aria-label="Releases">
-          <div className="section-header">
-            <h2>Releases</h2>
-            <p>{releases.length} results</p>
-          </div>
+          {adhoc ? (
+            <div className="section-header">
+              <div>
+                <h2>Direct search: {adhoc.label.name}</h2>
+                <p>
+                  {adhoc.loading ? 'Searching…' : `${adhoc.releases.length} results`}
+                  {adhoc.failures.length > 0 && ` · ${adhoc.failures.join(' · ')}`}
+                </p>
+              </div>
+              <button type="button" className="btn secondary" onClick={closeAdhoc}>
+                Back to feed
+              </button>
+            </div>
+          ) : (
+            <div className="section-header">
+              <div>
+                <h2>Releases</h2>
+                <p>
+                  {feed?.snapshot
+                    ? `${feed.snapshot.releases.length} results · ${feed.snapshot.meta.fromDate} – ${feed.snapshot.meta.toDate} · updated ${dateTimeFormat.format(new Date(feed.snapshot.finishedAt))}`
+                    : 'Not refreshed yet'}
+                  {nextRun && ` · ${nextRun}`}
+                </p>
+                {newCount > 0 && <p className="new-count">{newCount} new since your last visit</p>}
+              </div>
+              <button type="button" className="btn primary" onClick={refreshNow} disabled={!loaded || running || labels.length === 0}>
+                {running ? 'Refreshing…' : 'Refresh now'}
+              </button>
+            </div>
+          )}
 
-          {loading && releases.length === 0 && (
+          {!adhoc && running && (
+            <div className="loading-more" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              <p>
+                Refreshing {feed?.run.completed ?? 0} / {feed?.run.total ?? 0} labels
+                {feed?.snapshot ? ', showing previous results until done' : ''}
+              </p>
+            </div>
+          )}
+          {!adhoc && feed?.run.error && <p className="error">Last refresh failed: {feed.run.error}</p>}
+
+          {showSkeleton && (
             <div className="release-grid">
               {Array.from({ length: 6 }).map((_, index) => (
                 <ReleaseSkeleton key={index} />
@@ -512,21 +614,16 @@ Subpop`}
             </div>
           )}
 
-          {loading && releases.length > 0 && (
-            <div className="loading-more" role="status" aria-live="polite">
-              <span className="spinner" aria-hidden="true" />
-              <p>
-                Loading more releases... ({progress.current}/{progress.total})
-              </p>
-            </div>
+          {!showSkeleton && releases.length === 0 && (
+            <p className="empty">
+              {adhoc ? 'No releases for this label in the selected range.' : labels.length === 0 ? 'Add labels to start your feed.' : 'No releases in this range yet.'}
+            </p>
           )}
-
-          {emptyState && <p className="empty">No releases in this range yet.</p>}
 
           {releases.length > 0 && (
             <div className="release-grid">
               {releases.map((release) => (
-                <ReleaseCard key={`${release.id}-${release.releaseDate}`} release={release} />
+                <ReleaseCard key={`${release.id}-${release.releaseDate}`} release={release} isNew={isNew(release)} />
               ))}
             </div>
           )}

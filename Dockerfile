@@ -9,6 +9,7 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV CACHE_FILE_PATH=/app/data/cache.json
+ENV STATE_FILE_PATH=/app/data/state.json
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist

@@ -1,4 +1,29 @@
-import type { LabelSearchResult, SearchEvent, SearchRequest } from '../../shared/types';
+import type { FeedConfigUpdate, FeedState, LabelSearchResult, SearchEvent, SearchRequest } from '../../shared/types';
+
+async function json<T>(response: Response, fallback: string): Promise<T> {
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(payload.error ?? `${fallback} (HTTP ${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
+export async function getFeed(): Promise<FeedState> {
+  return json<FeedState>(await fetch('/api/feed'), 'Could not load feed');
+}
+
+export async function updateFeedConfig(update: FeedConfigUpdate): Promise<FeedState> {
+  const response = await fetch('/api/feed/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update)
+  });
+  return json<FeedState>(response, 'Could not save');
+}
+
+export async function startFeedRun(): Promise<FeedState> {
+  return json<FeedState>(await fetch('/api/feed/run', { method: 'POST' }), 'Could not start refresh');
+}
 
 export async function searchLabels(query: string): Promise<LabelSearchResult[]> {
   const response = await fetch(`/api/labels/search?q=${encodeURIComponent(query)}&limit=10`);

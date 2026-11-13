@@ -1,16 +1,19 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Feed, scheduleFromEnv } from './feed.js';
 import { buildMeta, findReleases, searchReleases } from './release-service.js';
 import { searchLabels } from './providers/musicbrainz.js';
 import { initCachePersistence, saveCache } from './lib/cache.js';
 import { logError, logInfo } from './lib/logger.js';
 import { ALL_SOURCES, DEFAULT_SOURCES } from '../shared/types.js';
-import type { HealthResponse, LabelRef, SearchEvent, SearchRequest, SearchResponse, SourceId } from '../shared/types.js';
+import type { FeedConfigUpdate, HealthResponse, LabelRef, SearchEvent, SearchRequest, SearchResponse, SourceId } from '../shared/types.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
 const cacheFile = process.env.CACHE_FILE_PATH?.trim() ?? path.resolve(process.cwd(), 'data/cache.json');
+const stateFile = process.env.STATE_FILE_PATH?.trim() || path.resolve(process.cwd(), 'data/state.json');
+const feed = new Feed({ filePath: stateFile, schedule: scheduleFromEnv() });
 
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
@@ -92,6 +95,24 @@ app.get('/api/labels/search', async (req, res) => {
   }
 });
 
+app.get('/api/feed', (_req, res) => {
+  res.json(feed.getState());
+});
+
+app.put('/api/feed/config', async (req, res) => {
+  try {
+    res.json(await feed.updateConfig((req.body ?? {}) as FeedConfigUpdate));
+  } catch (error) {
+    void logError('Feed config update failed', { error: String(error) });
+    res.status(500).json({ error: 'Could not save configuration' });
+  }
+});
+
+app.post('/api/feed/run', (_req, res) => {
+  const started = feed.startRun('manual');
+  res.status(started ? 202 : 200).json(feed.getState());
+});
+
 app.post('/api/releases/search', async (req, res) => {
   const input = parseSearchRequest(req.body);
   if (typeof input === 'string') {
@@ -153,6 +174,11 @@ if (cacheFile) {
   const restored = await initCachePersistence(cacheFile);
   void logInfo('Cache loaded', { file: cacheFile, entries: restored });
 }
+
+await feed.load();
+feed.startScheduler();
+const { schedule, labels } = feed.getState();
+void logInfo('Feed loaded', { file: stateFile, labels: labels.length, schedule });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {

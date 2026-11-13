@@ -2,14 +2,17 @@
 
 ## 1. Product Summary
 
-Label Release Tracker is a web app to discover recent releases for selected record labels.
+Label Release Tracker is a single-user web app that shows recent releases of the user's record labels. A server-side job refreshes the results every day, so opening the page shows the latest state immediately.
 
 Core behavior:
 
-1. Manage a label list. Labels are resolved to a MusicBrainz MBID when possible; labels without a MusicBrainz match are kept by name.
+1. Manage a label list stored on the server. Labels are resolved to a MusicBrainz MBID when possible; labels without an exact MusicBrainz match are kept by name.
 2. Search releases for a configurable date window with mode selector (`Days` default `7`, or `Year`).
 3. Query the selected primary sources per label in parallel (default: Deezer + MusicBrainz, optional Discogs), merge duplicates, and enrich with iTunes (Apple links, cover, genre) and Cover Art Archive.
-4. Stream results label by label into a modern, responsive, card-based overview.
+4. Run this search daily in the background (default 06:00 Europe/Berlin) and on demand (`Refresh now`); store the result as a snapshot and mark releases that are new since the user's last visit.
+5. Optionally run a one-off direct search for a single label without changing the feed.
+
+Access control is not part of the app: it is meant to run behind a reverse proxy with Basic Auth (or in a private network).
 
 ## 2. UX and Visual Requirements
 
@@ -35,13 +38,15 @@ Behavior:
 
 ## 2.3 Required UX States
 
+- Feed view (default): latest snapshot is shown immediately on page load, with result count, date window, `updated <date time>` and `next refresh <day>, <time>`
+- `New` badge (and highlighted card border) for releases whose `firstSeenAt` is later than the browser's previous visit; header shows `<n> new since your last visit`
+- `Refresh now` starts a server run; while it runs the previous snapshot stays visible and a progress line shows `Refreshing x / n labels` (the page polls every 2 s while running, every 60 s otherwise)
+- Without any snapshot yet, results of the running refresh are shown as they arrive
+- Direct search view: results of a one-off search for one label stream in; `Back to feed` returns to the feed (and aborts a running direct search)
 - Loading state with skeleton cards
-- Incremental result rendering: cards appear as soon as a label's first results are streamed; enriched versions (Apple links, cover) replace them in place
-- In-results loading indicator signaling that more results are incoming
-- `Cancel` replaces `Find from list` while a search runs; starting a new search aborts the running one
-- Empty state when no releases found
-- Error state for API/provider failures; partial failures are listed per label and source
-- Progress display for list search/import (`x / n`)
+- Empty states: no labels yet (`Add labels to start your feed.`), no releases in range, no releases for a direct search
+- Error state for API/provider failures; partial failures of the last refresh are listed per label and source in a collapsible section; a failed refresh shows `Last refresh failed: …` and keeps the previous snapshot
+- Progress display for label import (`Resolving labels on MusicBrainz: x / n`)
 - Collapsible instruction section explaining search workflow and import format
 - Button hierarchy with clear primary actions (search) and secondary utility actions
 - Keyboard-accessible form fields and actionable elements
@@ -51,19 +56,22 @@ Behavior:
 
 ## 3.1 Label Input and Management
 
-- Direct label input field
-- Label lookup via MusicBrainz search endpoint
+- The label list lives on the server (see 7) and every change is saved immediately.
+- Direct label input field (`Enter` runs `Find label`)
+- Label lookup via MusicBrainz search endpoint (Lucene special characters such as `*` in `o*rs` are escaped)
 - Candidate selection with disambiguation context (`country`, `disambiguation`)
 - Direct-search rule:
-  - default: use first label result for current input query
-  - when user selected a lookup candidate: primary button changes to `Search with selected label` and searches with that candidate
-- Add selected label to persistent list
+  - default: use first label result for current input query; if MusicBrainz knows no label, search by the typed name
+  - when user selected a lookup candidate: button changes to `Search selected label` and searches with that candidate
+- Add selected label to the list
 - Remove individual labels by clicking chip
-- Clear entire label list
-- Upload label list from `TXT/CSV`
-  - each name is resolved via MusicBrainz (exact name preferred, then country match, then first result)
-  - names without a MusicBrainz match are kept as name-only labels (chip with dashed border) and listed as a notice; Deezer and Discogs still search them by name
-- Export current label list as text file (`.txt`) for later re-import
+- `Clear all` removes the whole list after a confirmation
+- Import a label list from `TXT/CSV`:
+  - `Add from file` adds the file's labels to the current list (duplicates by MBID or name are skipped)
+  - `Replace from file` replaces the current list after a confirmation
+  - each name is resolved via MusicBrainz: exact (case-insensitive) name match only, the selected country breaks ties
+  - names without an exact match are kept as name-only labels (chip with dashed border) and listed in a notice; Deezer and Discogs still search them by name
+- `Export` downloads the current label list as text file (`.txt`) for later re-import
 - Import format is line-based text and supports comment lines (prefix `#`)
 - Label rows are plain lines (no quotes required), leading/trailing whitespace is ignored
 - Export format follows the same line-based structure and includes a comment header line
@@ -83,12 +91,13 @@ Fields:
   - `deezer` (default on)
   - `musicbrainz` (default on)
   - `discogs` (default off)
-- `discogsToken` (optional; only shown and sent when Discogs is selected)
+- Settings are saved on the server (debounced 500 ms) and used by the daily refresh and by direct searches.
+- Discogs token is server configuration only (`DISCOGS_TOKEN`); when Discogs is selected without a configured token, the source hint says so.
 
 Date window rule:
 
 - For `days` mode:
-  - `toDate = today` in user timezone
+  - `toDate = today` in the schedule timezone (`SCHEDULE_TIMEZONE`) for feed runs, in the browser timezone for direct searches
   - `fromDate = toDate - (rangeValue - 1)` days (calendar arithmetic in UTC, independent of server timezone)
   - inclusive range: `[fromDate, toDate]`
 - For `year` mode:
@@ -229,6 +238,16 @@ Rules:
 - Cache: in-memory read-through cache with in-flight dedupe, persisted as JSON to `CACHE_FILE_PATH` (default `data/cache.json`, empty value disables persistence). Max 50,000 entries, saved debounced (5 s) and on `SIGINT`/`SIGTERM`.
 - A repeated search with a warm cache completes without external requests (measured: 7 labels, 34 s cold → <0.1 s warm).
 
+## 4.8 Daily Feed
+
+- One feed per server (single user). State file `STATE_FILE_PATH` (default `data/state.json`) holds labels, settings, the latest snapshot, the first-seen history and the local day of the last scheduled run.
+- Scheduler: every 60 s the server checks whether the local time in `SCHEDULE_TIMEZONE` (default `Europe/Berlin`) has passed `SCHEDULE_TIME` (default `06:00`) and no scheduled run happened on that local day yet. This also catches up a missed run after downtime (e.g. container started at 14:00). `SCHEDULE_TIME=off` disables it.
+- Only one run at a time; `Refresh now` while a run is active does nothing (`200` instead of `202`).
+- A run searches all labels with the saved settings (same pipeline as 4.1–4.7). On success it replaces the snapshot; on failure the previous snapshot stays and the error is reported.
+- `firstSeenAt`: per release identity (normalized artist + title) the timestamp of the run that first found it. History entries older than 400 days are removed.
+- With an empty label list a scheduled run only marks the day as done.
+- Measured on 2026-11-13 with 66 labels: first run (cold cache) ~4.6 min, 0 failures; a repeated run is answered from the cache.
+
 ## 5. Matching, Mapping, and Dedupe Rules
 
 ## 5.1 Label Matching
@@ -330,9 +349,20 @@ Response:
 }
 ```
 
-## 6.3 Search request body
+## 6.3 Feed endpoints (used by the UI)
 
-Used by both search endpoints:
+- `GET /api/feed` → `FeedState`:
+  - `labels`, `settings` (`timeMode`, `timeValue`, `country`, `sources`)
+  - `snapshot`: `{ releases (with firstSeenAt), meta: SearchMeta, trigger: "schedule" | "manual", finishedAt }` or `null`
+  - `run`: `{ running, trigger?, startedAt?, completed, total, releases, failures, error? }`
+  - `schedule`: `{ enabled, time, timezone, nextRunDay? }`
+  - `discogsTokenConfigured`
+- `PUT /api/feed/config` with `{ labels?, settings? }` → `FeedState`. Labels are deduped (MBID or lower-cased name), max 500; settings are validated and merged into the current ones.
+- `POST /api/feed/run` → `202` with `FeedState` when a run started, `200` when one was already running.
+
+## 6.4 Search request body (direct search)
+
+Used by both direct-search endpoints:
 
 ```json
 {
@@ -347,10 +377,11 @@ Used by both search endpoints:
 ```
 
 - `labels`: 1–500 entries, `mbid` optional
+- `discogsToken`: optional per-request override; otherwise `DISCOGS_TOKEN` from the server environment
 - `sources`: subset of `deezer`, `musicbrainz`, `discogs`; empty/missing → default `["deezer","musicbrainz"]`
 - legacy `sourceMode` is still accepted when `sources` is missing: `hybrid` → default sources, `musicbrainz` → `["musicbrainz"]`, `discogs` → `["discogs"]`
 
-## 6.4 `POST /api/releases/stream` (used by the UI)
+## 6.5 `POST /api/releases/stream` (direct search in the UI)
 
 Response: `application/x-ndjson`, one `SearchEvent` per line:
 
@@ -363,7 +394,7 @@ Response: `application/x-ndjson`, one `SearchEvent` per line:
 
 Closing the connection aborts processing of labels not yet started.
 
-## 6.5 `POST /api/releases/search`
+## 6.6 `POST /api/releases/search`
 
 Same request body, non-streaming response:
 
@@ -414,17 +445,19 @@ Removed fields compared to v1: `matchedBy`, `matchConfidence` (replaced by `foun
 
 ## 7. Persistence
 
+Server (source of truth):
+
+- feed state file `STATE_FILE_PATH` (see 4.8): labels, settings, snapshot, first-seen history, last scheduled day
+- provider cache file `CACHE_FILE_PATH` (see 4.7)
+
 Browser `localStorage` (all access wrapped in try/catch):
 
-- `labelsearch.labels` (`{ name, mbid? }[]`)
-- `labelsearch.settings` (`timeMode`, `timeValue`, `country`, `sources`, `discogsToken`); old settings with `sourceMode` migrate to the default sources
-- `labelsearch.lastResults`
-
-Server: provider cache file `CACHE_FILE_PATH` (see 4.7).
+- `labelsearch.lastVisit`: timestamp of the previous visit, for `New` badges
+- one-time migration: if the server has no labels yet, labels and settings from the old keys `labelsearch.labels` / `labelsearch.settings` are sent to the server; afterwards `labelsearch.migratedToServer` is set and `labelsearch.lastResults` is removed
 
 ## 8. Non-Functional Requirements
 
-- No authentication in v1
+- No authentication in the app: single user, protected by a reverse proxy (Basic Auth) or a private network
 - Continue on partial provider failure (report per label and source)
 - Never drop a release because enrichment failed
 - Tokens never appear in request URLs, error messages or logs
@@ -442,7 +475,10 @@ Server: provider cache file `CACHE_FILE_PATH` (see 4.7).
 - Runtime serves:
   - `/api/*` via Express
   - static frontend files from same process
-- Provider cache at `/app/data/cache.json` (`CACHE_FILE_PATH`), declared as volume `/app/data`; `docker-compose.yml` mounts the named volume `labelsearch-data` so the cache survives container restarts.
+- Persistent data in `/app/data` (declared as volume; `docker-compose.yml` mounts the named volume `labelsearch-data`):
+  - `/app/data/state.json` (`STATE_FILE_PATH`): labels, settings, latest snapshot
+  - `/app/data/cache.json` (`CACHE_FILE_PATH`): provider cache
+- Schedule env: `SCHEDULE_TIME` (default `06:00`, `off` disables), `SCHEDULE_TIMEZONE` (default `Europe/Berlin`); optional `DISCOGS_TOKEN`.
 
 ## 9.2 Required Files
 
@@ -455,7 +491,8 @@ Server: provider cache file `CACHE_FILE_PATH` (see 4.7).
 - Default log file path: `logs/app.log` (project root)
 - Can be overridden via env var `LOG_FILE_PATH`
 - Logged events:
-  - server startup and cache load (entry count)
+  - server startup, cache load (entry count), feed load (label count, schedule)
+  - feed run start/finish (trigger, release and failure counts) and failures
   - HTTP request summary (`method`, `path`, `status`, `durationMs`)
   - per-label source failures, iTunes enrichment failures, Discogs detail caps
 
@@ -490,12 +527,24 @@ Required checks:
   - rate limiter spacing, `fetchJson` retry/no-retry/redaction
   - dedupe (suffixes, date drift, featured artists, reissues)
   - iTunes strict/loose matching, type mapping, genre fallback, date range inclusion of today
+  - feed: schedule due/next-day logic incl. timezone and catch-up, env parsing, first-seen stamping and pruning, label/settings sanitizing, single-flight runs, persistence round trip, failed run keeps snapshot, Lucene escaping
 - Build test: production frontend + backend compile
 - Container test:
   - image builds
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-11-13 (Daily feed)
+
+- Server-side daily feed: labels and settings are stored in `STATE_FILE_PATH`; a scheduler runs the search once a day (`SCHEDULE_TIME`, `SCHEDULE_TIMEZONE`, catch-up after downtime) and stores a snapshot; `Refresh now` starts a manual run.
+- New endpoints `GET /api/feed`, `PUT /api/feed/config`, `POST /api/feed/run`.
+- `firstSeenAt` per release and `New` badges for releases since the browser's previous visit.
+- Label import: `Add from file` and `Replace from file`; `Clear all` and replace ask for confirmation; MusicBrainz resolution only accepts exact name matches.
+- One-time migration of browser-stored labels/settings to the server.
+- Direct search for a single label kept as a separate view (`Back to feed`).
+- Discogs token is server configuration only (UI field removed).
+- MusicBrainz label queries escape Lucene special characters.
 
 ### 2026-11-13 (Release v0.3.0)
 
