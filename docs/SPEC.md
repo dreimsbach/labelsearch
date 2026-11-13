@@ -9,7 +9,7 @@ Core behavior:
 1. Manage a label list stored on the server. Labels are resolved to a MusicBrainz MBID when possible; labels without an exact MusicBrainz match are kept by name.
 2. Search releases for a configurable date window with mode selector (`Days` default `7`, or `Year`).
 3. Query the selected primary sources per label in parallel (default: Deezer + MusicBrainz, optional Discogs), merge duplicates, and enrich with iTunes (Apple links, cover, genre) and Cover Art Archive.
-4. Run this search daily in the background (default 06:00 Europe/Berlin) and on demand (`Refresh now`); store the result as a snapshot and mark releases that are new since the user's last visit.
+4. Run this search daily in the background (default 06:00 Europe/Berlin) and on demand (`Refresh now`). Each run checks only the last N days (default 7) and adds its finds to the stored feed, which keeps releases for 90 days; releases new since the user's last visit are marked.
 5. Optionally run a one-off direct search for a single label without changing the feed.
 
 Access control is not part of the app: it is meant to run behind a reverse proxy with Basic Auth (or in a private network).
@@ -81,12 +81,9 @@ Behavior:
 
 Fields:
 
-- `rangeValue` (number)
-- `rangeMode` selector:
-  - `days` (default): searches last `rangeValue` days including today
-  - `year`: searches full calendar year `rangeValue` (e.g. `2026`)
+- `Check last days` (number, `1..31`, default `7`): every run (scheduled, manual, direct search) searches the last N days including today. There is no year mode in the UI; a whole-year scan is never needed because the feed accumulates results (see 4.8).
 - `country` dropdown (default `DE`), used as iTunes storefront (fallback `US`)
-- range fields in one row: `Range` (value), `Unit` (Days/Year), `Country`
+- both fields share one row (also on mobile)
 - `sources` toggle chips (multi-select, at least one required; a one-line hint below explains each source):
   - `deezer` (default on)
   - `musicbrainz` (default on)
@@ -96,6 +93,7 @@ Fields:
 
 Date window rule:
 
+- Feed and UI always use `days` mode. The API (`/api/releases/*`) still supports `year` mode:
 - For `days` mode:
   - `toDate = today` in the schedule timezone (`SCHEDULE_TIMEZONE`) for feed runs, in the browser timezone for direct searches
   - `fromDate = toDate - (rangeValue - 1)` days (calendar arithmetic in UTC, independent of server timezone)
@@ -243,7 +241,10 @@ Rules:
 - One feed per server (single user). State file `STATE_FILE_PATH` (default `data/state.json`) holds labels, settings, the latest snapshot, the first-seen history and the local day of the last scheduled run.
 - Scheduler: every 60 s the server checks whether the local time in `SCHEDULE_TIMEZONE` (default `Europe/Berlin`) has passed `SCHEDULE_TIME` (default `06:00`) and no scheduled run happened on that local day yet. This also catches up a missed run after downtime (e.g. container started at 14:00). `SCHEDULE_TIME=off` disables it.
 - Only one run at a time; `Refresh now` while a run is active does nothing (`200` instead of `202`).
-- A run searches all labels with the saved settings (same pipeline as 4.1–4.7). On success it replaces the snapshot; on failure the previous snapshot stays and the error is reported.
+- A run searches all labels for the last `days` days with the saved settings (same pipeline as 4.1–4.7).
+- Accumulation: on success the run's results are merged into the previous snapshot (fresh results first, so newer metadata wins; dedupe as in 5.3). Releases whose release date is older than `FEED_RETENTION_DAYS` (default 90, min 7) before today are dropped. Releases a provider stops reporting stay in the feed until the retention ends.
+- On failure the previous snapshot stays and the error is reported.
+- Settings validation: `days` must be `1..31`. Stored or migrated legacy settings with `timeMode: 'year'` are ignored (→ default 7 days), legacy `timeMode: 'days'` with `timeValue` is taken over.
 - `firstSeenAt`: per release identity (normalized artist + title) the timestamp of the run that first found it. History entries older than 400 days are removed.
 - With an empty label list a scheduled run only marks the day as done.
 - Measured on 2026-11-13 with 66 labels: first run (cold cache) ~4.6 min, 0 failures; a repeated run is answered from the cache.
@@ -352,7 +353,7 @@ Response:
 ## 6.3 Feed endpoints (used by the UI)
 
 - `GET /api/feed` → `FeedState`:
-  - `labels`, `settings` (`timeMode`, `timeValue`, `country`, `sources`)
+  - `labels`, `settings` (`days`, `country`, `sources`), `retentionDays`
   - `snapshot`: `{ releases (with firstSeenAt), meta: SearchMeta, trigger: "schedule" | "manual", finishedAt }` or `null`
   - `run`: `{ running, trigger?, startedAt?, completed, total, releases, failures, error? }`
   - `schedule`: `{ enabled, time, timezone, nextRunDay? }`
@@ -478,7 +479,7 @@ Browser `localStorage` (all access wrapped in try/catch):
 - Persistent data in `/app/data` (declared as volume; `docker-compose.yml` mounts the named volume `labelsearch-data`):
   - `/app/data/state.json` (`STATE_FILE_PATH`): labels, settings, latest snapshot
   - `/app/data/cache.json` (`CACHE_FILE_PATH`): provider cache
-- Schedule env: `SCHEDULE_TIME` (default `06:00`, `off` disables), `SCHEDULE_TIMEZONE` (default `Europe/Berlin`); optional `DISCOGS_TOKEN`.
+- Schedule env: `SCHEDULE_TIME` (default `06:00`, `off` disables), `SCHEDULE_TIMEZONE` (default `Europe/Berlin`), `FEED_RETENTION_DAYS` (default `90`); optional `DISCOGS_TOKEN`.
 
 ## 9.2 Required Files
 
@@ -527,7 +528,7 @@ Required checks:
   - rate limiter spacing, `fetchJson` retry/no-retry/redaction
   - dedupe (suffixes, date drift, featured artists, reissues)
   - iTunes strict/loose matching, type mapping, genre fallback, date range inclusion of today
-  - feed: schedule due/next-day logic incl. timezone and catch-up, env parsing, first-seen stamping and pruning, label/settings sanitizing, single-flight runs, persistence round trip, failed run keeps snapshot, Lucene escaping
+  - feed: rolling-window settings (legacy year ignored), accumulation with retention, schedule due/next-day logic incl. timezone and catch-up, env parsing, first-seen stamping and pruning, label/settings sanitizing, single-flight runs, persistence round trip, failed run keeps snapshot, Lucene escaping
 - Build test: production frontend + backend compile
 - Container test:
   - image builds
@@ -537,7 +538,8 @@ Required checks:
 
 ### 2026-11-13 (Daily feed)
 
-- Server-side daily feed: labels and settings are stored in `STATE_FILE_PATH`; a scheduler runs the search once a day (`SCHEDULE_TIME`, `SCHEDULE_TIMEZONE`, catch-up after downtime) and stores a snapshot; `Refresh now` starts a manual run.
+- Server-side daily feed: labels and settings are stored in `STATE_FILE_PATH`; a scheduler runs the search once a day (`SCHEDULE_TIME`, `SCHEDULE_TIMEZONE`, catch-up after downtime); `Refresh now` starts a manual run.
+- The feed is a rolling window: each run checks the last `days` days (1–31, default 7) and adds its results to the stored feed; releases are kept for `FEED_RETENTION_DAYS` (default 90). Year mode removed from the UI; legacy year settings fall back to 7 days.
 - New endpoints `GET /api/feed`, `PUT /api/feed/config`, `POST /api/feed/run`.
 - `firstSeenAt` per release and `New` badges for releases since the browser's previous visit.
 - Label import: `Add from file` and `Replace from file`; `Clear all` and replace ask for confirmation; MusicBrainz resolution only accepts exact name matches.

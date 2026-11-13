@@ -18,10 +18,16 @@ import { logError, logInfo } from './lib/logger.js';
 import { buildMeta, searchReleases } from './release-service.js';
 
 const MAX_LABELS = 500;
+/** The feed is a rolling window: each run checks at most this many recent days. */
+const MAX_DAYS = 31;
 const FIRST_SEEN_RETENTION_DAYS = 400;
+const DEFAULT_RETENTION_DAYS = 90;
 const SCHEDULER_INTERVAL_MS = 60_000;
 
-const DEFAULT_SETTINGS: FeedSettings = { timeMode: 'days', timeValue: 7, country: 'DE', sources: DEFAULT_SOURCES };
+const DEFAULT_SETTINGS: FeedSettings = { days: 7, country: 'DE', sources: DEFAULT_SOURCES };
+
+/** Settings as sent by clients; `timeMode`/`timeValue` come from older browser-stored settings. */
+type SettingsInput = Partial<FeedSettings> & { timeMode?: string; timeValue?: number };
 
 interface PersistedState {
   labels: LabelRef[];
@@ -42,6 +48,8 @@ export interface ScheduleConfig {
 export interface FeedOptions {
   filePath?: string;
   schedule: ScheduleConfig;
+  /** Releases stay in the feed this many days after their release date (default 90). */
+  retentionDays?: number;
   search?: typeof searchReleases;
   now?: () => Date;
 }
@@ -119,21 +127,18 @@ export function sanitizeLabels(input: unknown): LabelRef[] {
   return labels.slice(0, MAX_LABELS);
 }
 
-export function sanitizeSettings(input: Partial<FeedSettings> | undefined, current: FeedSettings): FeedSettings {
+/**
+ * Validates settings. Only a rolling window of 1–31 days is allowed; legacy year settings
+ * (e.g. `timeMode: 'year', timeValue: 2026`) are ignored so a run never scans a whole year.
+ */
+export function sanitizeSettings(input: SettingsInput | undefined, current: FeedSettings): FeedSettings {
   const next = { ...current };
   if (!input) {
     return next;
   }
-  if (input.timeMode === 'days' || input.timeMode === 'year') {
-    next.timeMode = input.timeMode;
-  }
-  const value = Number(input.timeValue);
-  if (Number.isFinite(value)) {
-    next.timeValue = Math.trunc(value);
-  }
-  const [min, max, fallback] = next.timeMode === 'days' ? [1, 3650, 7] : [1900, 2100, new Date().getFullYear()];
-  if (next.timeValue < min || next.timeValue > max) {
-    next.timeValue = fallback;
+  const days = Number(input.days ?? (input.timeMode === 'days' ? input.timeValue : undefined));
+  if (Number.isFinite(days) && days >= 1 && days <= MAX_DAYS) {
+    next.days = Math.trunc(days);
   }
   if (typeof input.country === 'string' && /^[a-z]{2}$/i.test(input.country)) {
     next.country = input.country.toUpperCase();
@@ -145,6 +150,11 @@ export function sanitizeSettings(input: Partial<FeedSettings> | undefined, curre
     }
   }
   return next;
+}
+
+/** New results first (fresher metadata wins), then earlier ones still inside the retention period. */
+export function accumulateReleases(fresh: Release[], previous: Release[], keepFrom: string): Release[] {
+  return mergeReleases([...fresh, ...previous]).filter((release) => release.releaseDate >= keepFrom);
 }
 
 function idleRun(): FeedRun {
@@ -188,6 +198,10 @@ export class Feed {
     }
   }
 
+  private get retentionDays(): number {
+    return this.options.retentionDays ?? DEFAULT_RETENTION_DAYS;
+  }
+
   getState(): FeedState {
     const schedule: FeedSchedule = {
       enabled: this.options.schedule.enabled,
@@ -201,6 +215,7 @@ export class Feed {
       snapshot: this.state.snapshot,
       run: this.run,
       schedule,
+      retentionDays: this.retentionDays,
       discogsTokenConfigured: Boolean(process.env.DISCOGS_TOKEN?.trim())
     };
   }
@@ -247,7 +262,14 @@ export class Feed {
       return;
     }
 
-    const request: SearchRequest = { labels, ...settings, timezone: this.options.schedule.timezone };
+    const request: SearchRequest = {
+      labels,
+      timeMode: 'days',
+      timeValue: settings.days,
+      country: settings.country,
+      sources: settings.sources,
+      timezone: this.options.schedule.timezone
+    };
     // Keyed per label so a release found for two labels keeps both label names.
     const byKey = new Map<string, Release>();
     void logInfo('Feed run started', { trigger, labels: labels.length });
@@ -266,8 +288,11 @@ export class Feed {
       });
 
       const finishedAt = this.now().toISOString();
+      // Each run only checks the last few days; earlier finds are kept until the retention ends.
+      const keepFrom = addDays(localClock(this.now(), this.options.schedule.timezone).day, -this.retentionDays);
+      const releases = accumulateReleases(result.releases, this.state.snapshot?.releases ?? [], keepFrom);
       this.state.snapshot = {
-        releases: stampFirstSeen(result.releases, this.state.firstSeen, finishedAt),
+        releases: stampFirstSeen(releases, this.state.firstSeen, finishedAt),
         meta: buildMeta(request, result),
         trigger,
         finishedAt
@@ -297,6 +322,12 @@ export class Feed {
     this.timer = setInterval(() => this.tick(), SCHEDULER_INTERVAL_MS);
     this.timer.unref();
   }
+}
+
+/** Reads `FEED_RETENTION_DAYS` (default 90, minimum 7). */
+export function retentionFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env.FEED_RETENTION_DAYS);
+  return Number.isFinite(value) && value >= 7 ? Math.trunc(value) : DEFAULT_RETENTION_DAYS;
 }
 
 /** Reads `SCHEDULE_TIME` (`HH:MM`, or `off`) and `SCHEDULE_TIMEZONE`. */

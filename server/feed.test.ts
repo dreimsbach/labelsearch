@@ -10,7 +10,18 @@ vi.mock('./lib/logger.js', () => ({
 }));
 
 import type { Release } from '../shared/types.js';
-import { Feed, isRunDue, nextRunDay, sanitizeLabels, sanitizeSettings, scheduleFromEnv, stampFirstSeen, type ScheduleConfig } from './feed.js';
+import {
+  Feed,
+  accumulateReleases,
+  isRunDue,
+  nextRunDay,
+  retentionFromEnv,
+  sanitizeLabels,
+  sanitizeSettings,
+  scheduleFromEnv,
+  stampFirstSeen,
+  type ScheduleConfig
+} from './feed.js';
 import { escapeLucene } from './providers/musicbrainz.js';
 import type { searchReleases } from './release-service.js';
 
@@ -58,6 +69,18 @@ describe('schedule', () => {
   });
 });
 
+describe('accumulateReleases', () => {
+  it('adds fresh results to earlier ones and drops releases past the retention', () => {
+    const merged = accumulateReleases(
+      [release('Fresh', { releaseDate: '2026-11-12' }), release('Kept', { releaseDate: '2026-11-01', coverUrl: 'new.jpg' })],
+      [release('Kept', { releaseDate: '2026-11-01' }), release('Older', { releaseDate: '2026-10-01' }), release('Gone', { releaseDate: '2026-07-01' })],
+      '2026-08-15'
+    );
+    expect(merged.map((entry) => entry.title)).toEqual(['Fresh', 'Kept', 'Older']);
+    expect(merged[1].coverUrl).toBe('new.jpg');
+  });
+});
+
 describe('stampFirstSeen', () => {
   it('keeps the first sighting and prunes old history', () => {
     const history: Record<string, string> = {
@@ -79,11 +102,23 @@ describe('sanitize', () => {
     ).toEqual([{ name: 'Dial', mbid: undefined }, { name: 'Erased Tapes', mbid: 'x' }]);
   });
 
-  it('keeps settings in valid ranges', () => {
-    const current = { timeMode: 'days' as const, timeValue: 7, country: 'DE', sources: ['deezer' as const] };
-    expect(sanitizeSettings({ timeValue: 99999 }, current).timeValue).toBe(7);
+  it('keeps settings to a rolling window of 1-31 days', () => {
+    const current = { days: 7, country: 'DE', sources: ['deezer' as const] };
+    expect(sanitizeSettings({ days: 14 }, current).days).toBe(14);
+    expect(sanitizeSettings({ days: 365 }, current).days).toBe(7);
     expect(sanitizeSettings({ country: 'gb', sources: [] }, current)).toMatchObject({ country: 'GB', sources: ['deezer'] });
-    expect(sanitizeSettings({ timeMode: 'year', timeValue: 2025 }, current)).toMatchObject({ timeMode: 'year', timeValue: 2025 });
+  });
+
+  it('ignores legacy year settings but takes legacy day settings', () => {
+    const current = { days: 7, country: 'DE', sources: ['deezer' as const] };
+    expect(sanitizeSettings({ timeMode: 'year', timeValue: 2026 }, current).days).toBe(7);
+    expect(sanitizeSettings({ timeMode: 'days', timeValue: 10 }, current).days).toBe(10);
+  });
+
+  it('reads the retention from env', () => {
+    expect(retentionFromEnv({})).toBe(90);
+    expect(retentionFromEnv({ FEED_RETENTION_DAYS: '30' })).toBe(30);
+    expect(retentionFromEnv({ FEED_RETENTION_DAYS: '2' })).toBe(90);
   });
 
   it('escapes Lucene syntax in MusicBrainz label queries', () => {
@@ -118,7 +153,7 @@ describe('Feed', () => {
     dir = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'feed-'));
     const filePath = path.join(dir, 'state.json');
     let now = new Date('2026-11-12T05:00:00Z');
-    const search = fakeSearch([[release('Old')], [release('Old'), release('New')]]);
+    const search = fakeSearch([[release('Old', { releaseDate: '2026-11-10' })], [release('New', { releaseDate: '2026-11-13' })]]);
     const feed = new Feed({ filePath, schedule: berlin6, search, now: () => now });
 
     await feed.updateConfig({ labels: [{ name: 'Dial' }], settings: { country: 'GB' } });
@@ -136,10 +171,27 @@ describe('Feed', () => {
     expect(state.labels).toEqual([{ name: 'Dial' }]);
     expect(state.settings.country).toBe('GB');
     expect(state.snapshot?.releases.map((entry) => [entry.title, entry.firstSeenAt])).toEqual([
-      ['Old', '2026-11-12T05:00:00.000Z'],
-      ['New', '2026-11-13T05:00:00.000Z']
+      ['New', '2026-11-13T05:00:00.000Z'],
+      ['Old', '2026-11-12T05:00:00.000Z']
     ]);
-    expect(vi.mocked(search).mock.calls[0][0]).toMatchObject({ country: 'GB', timezone: 'Europe/Berlin', labels: [{ name: 'Dial' }] });
+    expect(vi.mocked(search).mock.calls[0][0]).toMatchObject({
+      timeMode: 'days',
+      timeValue: 7,
+      country: 'GB',
+      timezone: 'Europe/Berlin',
+      labels: [{ name: 'Dial' }]
+    });
+  });
+
+  it('migrates a stored year setting to a 7-day window on load', async () => {
+    dir = await mkdtemp(path.join(process.env.TMPDIR ?? os.tmpdir(), 'feed-'));
+    const filePath = path.join(dir, 'state.json');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(filePath, JSON.stringify({ labels: [{ name: 'Dial' }], settings: { timeMode: 'year', timeValue: 2026, country: 'DE', sources: ['deezer'] } }));
+
+    const feed = new Feed({ filePath, schedule: berlin6 });
+    await feed.load();
+    expect(feed.getState().settings).toEqual({ days: 7, country: 'DE', sources: ['deezer'] });
   });
 
   it('runs the schedule once per day', async () => {

@@ -6,16 +6,15 @@ It is a single-user app without its own login: run it behind a reverse proxy wit
 
 ## Features
 
-- Daily background refresh (default 06:00 Europe/Berlin, configurable) with catch-up after downtime; the page shows the latest snapshot immediately
+- Daily background refresh (default 06:00 Europe/Berlin, configurable) with catch-up after downtime; the page shows the latest results immediately
+- Each refresh checks only the last N days (default 7, max 31) and adds what it finds; releases stay in the feed for 90 days (`FEED_RETENTION_DAYS`), so the list grows into a history without ever scanning a whole year
 - `New` badges for releases found since your last visit, plus `updated …` / `next refresh …` info
 - `Refresh now` for an on-demand run (progress shown, previous results stay visible until it finishes)
 - Label list and settings stored on the server (`data/state.json`), so every browser/device sees the same feed
 - Label import from file: `Add from file` (extend the list) or `Replace from file` (swap the list), plus export, single add/remove and `Clear all`
 - Label management with MusicBrainz MBID resolution (exact name matches only); labels without a match are kept by name (dashed chip) and still searched on Deezer/Discogs
 - `Search directly`: one-off search for a single label without changing the feed
-- Search window config with selector:
-  - `Days` mode (default `7`): searches the last N days including today
-  - `Year` mode (e.g. `2026`): searches all releases in that year
+- `Check last days` field (1–31, default 7)
 - Country dropdown (default `DE`, iTunes storefront with `US` fallback)
 - Source toggle chips (multi-select, one row):
   - `Deezer` (default on): fast, best coverage for new digital releases
@@ -153,6 +152,7 @@ Required GitHub repository secrets:
 - `STATE_FILE_PATH` (optional; default `./data/state.json`, `/app/data/state.json` in the container): label list, settings and latest results
 - `SCHEDULE_TIME` (optional; default `06:00`; `off` disables the daily refresh)
 - `SCHEDULE_TIMEZONE` (optional; default `Europe/Berlin`): timezone for the schedule and the date window of feed runs
+- `FEED_RETENTION_DAYS` (optional; default `90`, minimum `7`): how long releases stay in the feed after their release date
 - Default User-Agents deliberately contain no traceable data (no e-mail, repo link, URL or name). Set your own value via env only if you want to.
 - The Discogs token is server configuration (`DISCOGS_TOKEN`); the API still accepts a per-request `discogsToken` override.
 
@@ -175,7 +175,7 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 - Discogs tokens are sent as `Authorization` header and redacted from errors/logs.
 - If enrichment (iTunes, Cover Art Archive) fails, releases are still shown.
 - Cover priority: Deezer -> Discogs -> Cover Art Archive -> iTunes. Apple artwork URLs are normalized to a high-resolution variant.
-- Year searches for old years cannot use the Deezer early stop and are capped at 400 album lookups per label.
+- Year searches (API only, `timeMode: "year"`) for old years cannot use the Deezer early stop and are capped at 400 album lookups per label.
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
@@ -183,6 +183,7 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 ### 2026-11-13 (Daily feed)
 
 - The app now refreshes your label list every day in the background (`SCHEDULE_TIME`, default 06:00 Europe/Berlin) and shows the latest results immediately when you open it; `Refresh now` runs it on demand.
+- Each refresh only checks the last N days (default 7) and adds its finds to the feed, which keeps releases for 90 days. The year mode is gone; a year setting saved in the browser falls back to 7 days.
 - Label list and settings are stored on the server (`STATE_FILE_PATH`, Docker volume `/app/data`); existing labels from the browser are moved there automatically on first load.
 - `New` badges for releases found since your last visit.
 - Label import can add to (`Add from file`) or replace (`Replace from file`) the list; replacing and clearing ask for confirmation.

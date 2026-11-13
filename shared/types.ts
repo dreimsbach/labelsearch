@@ -98,10 +98,9 @@ export type SearchEvent =
   | { type: 'done'; meta: SearchMeta }
   | { type: 'error'; message: string };
 
-/** Search settings the daily feed run uses. */
+/** Search settings the daily feed run uses. The feed always checks the last `days` days. */
 export interface FeedSettings {
-  timeMode: TimeMode;
-  timeValue: number;
+  days: number;
   country: string;
   sources: SourceId[];
 }
@@ -142,6 +141,8 @@ export interface FeedState {
   snapshot: FeedSnapshot | null;
   run: FeedRun;
   schedule: FeedSchedule;
+  /** Releases stay in the feed this many days after their release date. */
+  retentionDays: number;
   discogsTokenConfigured: boolean;
 }
 

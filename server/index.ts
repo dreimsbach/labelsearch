@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Feed, scheduleFromEnv } from './feed.js';
+import { Feed, retentionFromEnv, scheduleFromEnv } from './feed.js';
 import { buildMeta, findReleases, searchReleases } from './release-service.js';
 import { searchLabels } from './providers/musicbrainz.js';
 import { initCachePersistence, saveCache } from './lib/cache.js';
@@ -13,7 +13,7 @@ const app = express();
 const port = Number(process.env.PORT ?? 8787);
 const cacheFile = process.env.CACHE_FILE_PATH?.trim() ?? path.resolve(process.cwd(), 'data/cache.json');
 const stateFile = process.env.STATE_FILE_PATH?.trim() || path.resolve(process.cwd(), 'data/state.json');
-const feed = new Feed({ filePath: stateFile, schedule: scheduleFromEnv() });
+const feed = new Feed({ filePath: stateFile, schedule: scheduleFromEnv(), retentionDays: retentionFromEnv() });
 
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {

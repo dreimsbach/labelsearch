@@ -252,10 +252,6 @@ a:focus-visible {
   border-style: dashed;
 }
 
-.grid-row-3 {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr);
-}
-
 .source-picker {
   border: 0;
   padding: 0;
@@ -608,11 +604,7 @@ a:focus-visible {
   }
 
   .grid-row {
-    grid-template-columns: 1fr;
-  }
-
-  .grid-row-3 {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .grid-row > * {

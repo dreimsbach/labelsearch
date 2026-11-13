@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { mergeReleases } from '../shared/merge';
-import type { FeedSettings, FeedState, LabelRef, LabelSearchResult, Release, SourceId, TimeMode } from '../shared/types';
+import type { FeedSettings, FeedState, LabelRef, LabelSearchResult, Release, SourceId } from '../shared/types';
 import { LabelChip } from './components/LabelChip';
 import { ReleaseCard } from './components/ReleaseCard';
 import { ReleaseSkeleton } from './components/ReleaseSkeleton';
@@ -12,6 +12,7 @@ const COUNTRIES = ['DE', 'US', 'GB', 'FR', 'JP'];
 const POLL_RUNNING_MS = 2_000;
 const POLL_IDLE_MS = 60_000;
 const SETTINGS_SAVE_DELAY_MS = 500;
+const MAX_DAYS = 31;
 
 const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
   { id: 'deezer', label: 'Deezer', hint: 'fastest, best for new digital releases' },
@@ -268,7 +269,14 @@ export function App(): JSX.Element {
     const byId = new Map<string, Release>();
     try {
       await streamReleases(
-        { labels: [label], ...settings, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        {
+          labels: [label],
+          timeMode: 'days',
+          timeValue: settings.days,
+          country: settings.country,
+          sources: settings.sources,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        },
         (event) => {
           if (event.type === 'releases') {
             event.releases.forEach((release) => byId.set(release.id, release));
@@ -354,7 +362,8 @@ export function App(): JSX.Element {
             <summary>How it works & import format</summary>
             <ol>
               <li>Build your label list: search and add labels, or import a file (add to or replace the list).</li>
-              <li>Pick range, country and sources. They are saved and used by the daily refresh.</li>
+              <li>Pick how many recent days to check, country and sources. They are saved and used by the daily refresh.</li>
+              <li>Each refresh checks only those recent days and adds what it finds; releases stay in the list for a while, so it grows into a history.</li>
               <li>Open the page any time to see the latest results. "New" marks releases found since your last visit.</li>
               <li>"Search directly" runs a one-off search for a single label without changing the feed.</li>
             </ol>
@@ -414,37 +423,22 @@ Subpop`}
 
           {settings && (
             <>
-              <div className="input-row grid-row grid-row-3">
+              <div className="input-row grid-row">
                 <div>
-                  <label htmlFor="time-value">Range</label>
+                  <label htmlFor="days">Check last days</label>
                   <input
-                    id="time-value"
+                    id="days"
                     type="number"
-                    min={settings.timeMode === 'days' ? 1 : 1900}
-                    max={settings.timeMode === 'days' ? 3650 : 2100}
-                    value={settings.timeValue}
+                    min={1}
+                    max={MAX_DAYS}
+                    value={settings.days}
                     onChange={(event) => {
                       const next = Math.trunc(Number(event.target.value));
-                      if (Number.isFinite(next) && next > 0) {
-                        changeSettings({ timeValue: next });
+                      if (Number.isFinite(next) && next >= 1 && next <= MAX_DAYS) {
+                        changeSettings({ days: next });
                       }
                     }}
                   />
-                </div>
-
-                <div>
-                  <label htmlFor="range-mode">Unit</label>
-                  <select
-                    id="range-mode"
-                    value={settings.timeMode}
-                    onChange={(event) => {
-                      const timeMode = event.target.value as TimeMode;
-                      changeSettings({ timeMode, timeValue: timeMode === 'days' ? 7 : new Date().getFullYear() });
-                    }}
-                  >
-                    <option value="days">Days</option>
-                    <option value="year">Year</option>
-                  </select>
                 </div>
 
                 <div>
@@ -583,7 +577,7 @@ Subpop`}
                 <h2>Releases</h2>
                 <p>
                   {feed?.snapshot
-                    ? `${feed.snapshot.releases.length} results · ${feed.snapshot.meta.fromDate} – ${feed.snapshot.meta.toDate} · updated ${dateTimeFormat.format(new Date(feed.snapshot.finishedAt))}`
+                    ? `${feed.snapshot.releases.length} releases (kept ${feed.retentionDays} days) · last ${feed.settings.days} days checked ${dateTimeFormat.format(new Date(feed.snapshot.finishedAt))}`
                     : 'Not refreshed yet'}
                   {nextRun && ` · ${nextRun}`}
                 </p>
