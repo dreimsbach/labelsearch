@@ -1,11 +1,15 @@
-export type SourceMode = 'hybrid' | 'musicbrainz' | 'discogs';
+export type SourceId = 'deezer' | 'musicbrainz' | 'discogs';
 export type TimeMode = 'days' | 'year';
 
 export type ReleaseType = 'Album' | 'Single' | 'EP';
 
+export const ALL_SOURCES: SourceId[] = ['deezer', 'musicbrainz', 'discogs'];
+export const DEFAULT_SOURCES: SourceId[] = ['deezer', 'musicbrainz'];
+
 export interface LabelRef {
-  mbid: string;
   name: string;
+  /** MusicBrainz label id; optional because Deezer/Discogs work by name. */
+  mbid?: string;
 }
 
 export interface SearchRequest {
@@ -13,14 +17,21 @@ export interface SearchRequest {
   timeMode: TimeMode;
   timeValue: number;
   country: string;
-  sourceMode: SourceMode;
+  sources: SourceId[];
   timezone: string;
   discogsToken?: string;
 }
 
 export interface LabelFailure {
   label: LabelRef;
+  source?: SourceId | 'itunes';
   message: string;
+}
+
+export interface ExternalLink {
+  label: string;
+  url: string;
+  source: 'musicbrainz' | 'itunes' | 'deezer' | 'discogs';
 }
 
 export interface Release {
@@ -43,11 +54,7 @@ export interface Release {
   appleAlbumUrl?: string;
   deezerAlbumUrl?: string;
   discogsReleaseUrl?: string;
-  externalLinks?: Array<{
-    label: string;
-    url: string;
-    source: 'musicbrainz' | 'itunes' | 'deezer' | 'discogs';
-  }>;
+  externalLinks?: ExternalLink[];
   sourceDetails: {
     musicbrainzReleaseId?: string;
     musicbrainzReleaseGroupId?: string;
@@ -56,23 +63,37 @@ export interface Release {
     discogsReleaseId?: number;
   };
   matchedByLabel: string[];
-  matchConfidence: 'high' | 'none';
-  matchedBy: 'itunes' | 'musicbrainz' | 'hybrid' | 'hybrid-deezer' | 'hybrid-discogs' | 'discogs';
+  /** Primary sources that reported this release for a label. */
+  foundBy: SourceId[];
+}
+
+export interface SearchMeta {
+  sources: SourceId[];
+  timeMode: TimeMode;
+  timeValue: number;
+  country: string;
+  fromDate: string;
+  toDate: string;
+  searchedAt: string;
+  partialFailures: LabelFailure[];
 }
 
 export interface SearchResponse {
   releases: Release[];
-  meta: {
-    sourceMode: SourceMode;
-    timeMode: TimeMode;
-    timeValue: number;
-    country: string;
-    fromDate: string;
-    toDate: string;
-    searchedAt: string;
-    partialFailures: LabelFailure[];
-  };
+  meta: SearchMeta;
 }
+
+/**
+ * NDJSON events of `POST /api/releases/stream`.
+ * `releases` events upsert by `Release.id` (enriched versions are re-sent with the same id).
+ */
+export type SearchEvent =
+  | { type: 'start'; fromDate: string; toDate: string; totalLabels: number }
+  | { type: 'releases'; label: LabelRef; releases: Release[] }
+  | { type: 'failure'; failure: LabelFailure }
+  | { type: 'labelDone'; label: LabelRef; completed: number; totalLabels: number }
+  | { type: 'done'; meta: SearchMeta }
+  | { type: 'error'; message: string };
 
 export interface LabelSearchResult {
   id: string;

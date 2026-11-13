@@ -3,3 +3,4 @@ dist
 dist-server
 .DS_Store
 logs
+data

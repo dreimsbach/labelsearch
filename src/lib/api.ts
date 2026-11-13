@@ -1,4 +1,4 @@
-import type { LabelRef, LabelSearchResult, Release, SearchResponse, SourceMode, TimeMode } from '../../shared/types';
+import type { LabelSearchResult, SearchEvent, SearchRequest } from '../../shared/types';
 
 export async function searchLabels(query: string): Promise<LabelSearchResult[]> {
   const response = await fetch(`/api/labels/search?q=${encodeURIComponent(query)}&limit=10`);
@@ -10,79 +10,36 @@ export async function searchLabels(query: string): Promise<LabelSearchResult[]> 
   return payload.labels;
 }
 
-export async function searchReleasesForLabels(
-  labels: LabelRef[],
-  timeMode: TimeMode,
-  timeValue: number,
-  country: string,
-  sourceMode: SourceMode,
-  timezone: string,
-  discogsToken?: string
-): Promise<SearchResponse> {
-  const response = await fetch('/api/releases/search', {
+/** Streams NDJSON search events; resolves when the server closes the stream. */
+export async function streamReleases(request: SearchRequest, onEvent: (event: SearchEvent) => void, signal?: AbortSignal): Promise<void> {
+  const response = await fetch('/api/releases/stream', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      labels,
-      timeMode,
-      timeValue,
-      country,
-      sourceMode,
-      timezone,
-      discogsToken
-    })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal
   });
 
-  if (!response.ok) {
-    const payload = (await response.json()) as { error?: string };
-    if (payload.error?.includes('daysBack')) {
-      throw new Error('Backend appears outdated (daysBack API). Please restart dev server so frontend and backend use the same version.');
-    }
-    throw new Error(payload.error ?? 'Search failed');
+  if (!response.ok || !response.body) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(payload.error ?? `Search failed (HTTP ${response.status})`);
   }
 
-  return (await response.json()) as SearchResponse;
-}
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
 
-export function dedupeReleases(releases: Release[]): Release[] {
-  const map = new Map<string, Release>();
-
-  for (const release of releases) {
-    const key = `${release.artist.toLowerCase()}::${release.title.toLowerCase()}::${release.releaseDate}`;
-    const current = map.get(key);
-
-    if (!current) {
-      map.set(key, release);
-      continue;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (value) {
+      buffer += value;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      lines.filter((line) => line.trim()).forEach((line) => onEvent(JSON.parse(line) as SearchEvent));
     }
-
-    map.set(key, {
-      ...current,
-      labels: [...new Set([...current.labels, ...release.labels])],
-      matchedByLabel: [...new Set([...current.matchedByLabel, ...release.matchedByLabel])],
-      genres: current.genres.length > 0 ? current.genres : release.genres,
-      styles: (current.styles?.length ?? 0) > 0 ? current.styles : release.styles,
-      status: current.status ?? release.status,
-      country: current.country ?? release.country,
-      barcode: current.barcode ?? release.barcode,
-      packaging: current.packaging ?? release.packaging,
-      trackCount: current.trackCount ?? release.trackCount,
-      mediaFormat: current.mediaFormat ?? release.mediaFormat,
-      coverUrl: current.coverUrl ?? release.coverUrl,
-      appleArtistUrl: current.appleArtistUrl ?? release.appleArtistUrl,
-      appleAlbumUrl: current.appleAlbumUrl ?? release.appleAlbumUrl,
-      deezerAlbumUrl: current.deezerAlbumUrl ?? release.deezerAlbumUrl,
-      discogsReleaseUrl: current.discogsReleaseUrl ?? release.discogsReleaseUrl,
-      externalLinks: [
-        ...new Map(
-          [...(current.externalLinks ?? []), ...(release.externalLinks ?? [])].map((entry) => [entry.url, entry])
-        ).values()
-      ],
-      matchConfidence: current.matchConfidence === 'high' || release.matchConfidence === 'high' ? 'high' : 'none'
-    });
+    if (done) {
+      if (buffer.trim()) {
+        onEvent(JSON.parse(buffer) as SearchEvent);
+      }
+      return;
+    }
   }
-
-  return [...map.values()].sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));
 }

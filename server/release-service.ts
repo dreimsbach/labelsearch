@@ -1,661 +1,330 @@
-import type { LabelFailure, LabelRef, Release, SearchRequest } from '../shared/types.js';
+import { mergeReleases, uniqueLinks } from '../shared/merge.js';
+import type { LabelFailure, LabelRef, Release, SearchEvent, SearchMeta, SearchRequest, SourceId } from '../shared/types.js';
 import { computeDateRange } from './lib/date.js';
-import { dedupeReleaseKey, mapReleaseType, pickBestExternalMatch, pickBestItunesMatch, resolveGenres } from './lib/match.js';
+import { HttpError } from './lib/http.js';
+import { normalizeLabelName } from './lib/labels.js';
+import { mapPool } from './lib/limiter.js';
 import { logWarn } from './lib/logger.js';
-import { findDeezerCandidates } from './providers/deezer.js';
-import { fetchDiscogsRelease, findDiscogsCandidates, searchDiscogsByLabelYear } from './providers/discogs.js';
+import { inferDiscogsType, mapDeezerRecordType, mapReleaseType, pickItunesMatch, resolveGenres } from './lib/match.js';
+import { findCoverArtUrl } from './providers/coverartarchive.js';
+import { findLabelAlbums, type DeezerAlbum } from './providers/deezer.js';
+import { fetchDiscogsRelease, findDiscogsLabelIdByName, listLabelReleases, type DiscogsReleaseDetail } from './providers/discogs.js';
 import { findItunesCandidates } from './providers/itunes.js';
-import { searchReleasesByLabel, type MbRelease } from './providers/musicbrainz.js';
+import { getDiscogsLabelId, searchLabels, searchReleasesByLabel, type MbRelease } from './providers/musicbrainz.js';
 
-interface SearchResult {
+/** Labels processed at once; per-provider limiters keep the actual request rate in check. */
+const LABEL_CONCURRENCY = 4;
+const ENRICH_CONCURRENCY = 3;
+const DISCOGS_MAX_DETAILS = 150;
+const SOURCE_ORDER: SourceId[] = ['deezer', 'musicbrainz', 'discogs'];
+
+interface SearchContext {
+  fromDate: string;
+  toDate: string;
+  mode: SearchRequest['timeMode'];
+  country: string;
+  discogsToken?: string;
+}
+
+export interface SearchResult {
   releases: Release[];
   fromDate: string;
   toDate: string;
   partialFailures: LabelFailure[];
 }
 
-function friendlyProviderError(message: string): string {
-  if (message.includes('HTTP 429') && message.includes('api.discogs.com')) {
-    return 'Discogs rate limit reached. Add DISCOGS_TOKEN (recommended) and retry in a moment.';
+const SOURCE_NAMES: Record<SourceId | 'itunes', string> = {
+  deezer: 'Deezer',
+  musicbrainz: 'MusicBrainz',
+  discogs: 'Discogs',
+  itunes: 'iTunes'
+};
+
+export function friendlyProviderError(source: SourceId | 'itunes', error: unknown): string {
+  const name = SOURCE_NAMES[source];
+  if (error instanceof HttpError && (error.status === 429 || error.status === 503)) {
+    return source === 'discogs'
+      ? 'Discogs rate limit reached. Add a Discogs token (UI or DISCOGS_TOKEN) and retry in a minute.'
+      : `${name} rate limit reached. Retry in a minute.`;
   }
-  return message;
+  return `${name}: ${error instanceof Error ? error.message : String(error)}`;
 }
 
-interface CoverArtArchivePayload {
-  images?: Array<{
-    front?: boolean;
-    thumbnails?: {
-      large?: string;
-      [key: string]: string | undefined;
-    };
-  }>;
-}
-
-const coverArtCache = new Map<string, Promise<string | undefined>>();
-
-function uniqueLinks(items: Release['externalLinks'] = []): Release['externalLinks'] {
-  const seen = new Set<string>();
-  const out: NonNullable<Release['externalLinks']> = [];
-
-  for (const item of items) {
-    if (!item?.url || seen.has(item.url)) {
-      continue;
-    }
-    seen.add(item.url);
-    out.push(item);
-  }
-
-  return out;
-}
-
-function mapMbExternalLinks(release: MbRelease): NonNullable<Release['externalLinks']> {
-  const links = (release.relations ?? [])
-    .map((relation) => relation.url?.resource?.trim())
-    .filter((url): url is string => Boolean(url && /^https?:\/\//i.test(url)))
-    .slice(0, 6)
-    .map((url) => ({
-      label: 'Official',
-      url,
-      source: 'musicbrainz' as const
-    }));
-
-  return uniqueLinks(links) ?? [];
-}
-
-function mediaFormat(release: MbRelease): string | undefined {
-  const formats = (release.media ?? []).map((entry) => entry.format?.trim()).filter((entry): entry is string => Boolean(entry));
-  if (formats.length === 0) {
-    return undefined;
-  }
-
-  return [...new Set(formats)].join(', ');
-}
-
-function trackCount(release: MbRelease): number | undefined {
-  const total = (release.media ?? []).reduce((sum, media) => sum + (media['track-count'] ?? 0), 0);
-  return total > 0 ? total : undefined;
-}
+// ---------- mapping ----------
 
 function toHighResArtwork(url?: string): string | undefined {
-  if (!url) {
-    return undefined;
-  }
-
-  return url.replace(/\/\d+x\d+bb(?:-\d+)?\.jpg$/i, '/1200x1200bb.jpg');
-}
-
-async function findCoverArtUrl(mbReleaseId?: string): Promise<string | undefined> {
-  if (!mbReleaseId) {
-    return undefined;
-  }
-
-  const cached = coverArtCache.get(mbReleaseId);
-  if (cached) {
-    return cached;
-  }
-
-  const promise = (async (): Promise<string | undefined> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
-
-    try {
-      const response = await fetch(`https://coverartarchive.org/release/${mbReleaseId}`, {
-        headers: { Accept: 'application/json' },
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        return undefined;
-      }
-
-      const payload = (await response.json()) as CoverArtArchivePayload;
-      const front = payload.images?.find((image) => image.front) ?? payload.images?.[0];
-      // Force CAA to 1200 variant to avoid very large originals (e.g. 3000x3000).
-      if (front) {
-        return `https://coverartarchive.org/release/${mbReleaseId}/front-1200`;
-      }
-
-      return undefined;
-    } catch {
-      return undefined;
-    } finally {
-      clearTimeout(timer);
-    }
-  })();
-
-  coverArtCache.set(mbReleaseId, promise);
-  return promise;
-}
-
-function releaseArtist(release: MbRelease): string {
-  return release['artist-credit']?.[0]?.name?.trim() ?? 'Unknown Artist';
-}
-
-function releaseDate(release: MbRelease): string {
-  return release.date?.slice(0, 10) ?? '0000-00-00';
+  return url?.replace(/\/\d+x\d+bb(?:-\d+)?\.jpg$/i, '/1200x1200bb.jpg');
 }
 
 function validYmd(value?: string): string | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return null;
-  }
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
     return null;
   }
   return value;
 }
 
-function inferDiscogsType(title: string, descriptions: string[], trackTotal?: number): Release['type'] {
-  const lowerTitle = title.toLowerCase();
-  const lowerDescriptions = descriptions.map((entry) => entry.toLowerCase());
-
-  if (/\bep\b/i.test(lowerTitle) || lowerDescriptions.some((entry) => /\bep\b/i.test(entry))) {
-    return 'EP';
-  }
-
-  if (lowerDescriptions.some((entry) => entry.includes('single') || entry.includes('45 rpm'))) {
-    return 'Single';
-  }
-
-  if (typeof trackTotal === 'number') {
-    if (trackTotal <= 2) {
-      return 'Single';
-    }
-    if (trackTotal <= 6) {
-      return 'EP';
-    }
-    return 'Album';
-  }
-
-  if (lowerDescriptions.some((entry) => /\blp\b/i.test(entry) || entry.includes('album'))) {
-    return 'Album';
-  }
-
-  return 'Single';
+function baseRelease(label: LabelRef, source: SourceId): Pick<Release, 'labels' | 'matchedByLabel' | 'foundBy'> {
+  return { labels: [label.name], matchedByLabel: [label.name], foundBy: [source] };
 }
 
-function discogsReleaseDate(released: string | undefined, fallbackYear: number): string {
-  const parsed = validYmd(released);
-  if (parsed) {
-    return parsed;
-  }
-
-  return `${fallbackYear}-01-01`;
-}
-
-function inDateRange(day: string, fromDate: string, toDate: string): boolean {
-  return day >= fromDate && day <= toDate;
-}
-
-function normalizeLoose(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function dayDistance(left: string, right: string): number {
-  const a = new Date(`${left.slice(0, 10)}T00:00:00Z`);
-  const b = new Date(`${right.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return Math.round(Math.abs(a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function pickDiscogsItunesMatch(release: Release, candidates: Awaited<ReturnType<typeof findItunesCandidates>>) {
-  const artist = normalizeLoose(release.artist);
-  const title = normalizeLoose(release.title);
-  let best: (typeof candidates)[number] | null = null;
-  let bestScore = -1;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  for (const candidate of candidates) {
-    const candidateArtist = normalizeLoose(candidate.artistName);
-    const candidateTitle = normalizeLoose(candidate.collectionName);
-    const artistMatched = candidateArtist === artist || candidateArtist.includes(artist) || artist.includes(candidateArtist);
-    const titleMatched = candidateTitle === title || candidateTitle.includes(title) || title.includes(candidateTitle);
-    if (!artistMatched || !titleMatched) {
-      continue;
-    }
-
-    const distance = dayDistance(candidate.releaseDate, release.releaseDate);
-    let score = 0;
-    score += candidateArtist === artist ? 60 : 45;
-    score += candidateTitle === title ? 30 : 20;
-    if (distance <= 7) {
-      score += 10;
-    }
-
-    if (score > bestScore || (score === bestScore && distance < bestDistance)) {
-      best = candidate;
-      bestScore = score;
-      bestDistance = distance;
-    }
-  }
-
-  return bestScore >= 70 ? best : null;
-}
-
-async function enrichDiscogsWithItunes(release: Release, country: string): Promise<Release> {
-  try {
-    const candidates = await findItunesCandidates(release.artist, release.title, country);
-    const strict = pickBestItunesMatch(release.artist, release.title, release.releaseDate, candidates);
-    let matched = strict ?? pickDiscogsItunesMatch(release, candidates);
-    if (!matched && country.toUpperCase() !== 'US') {
-      const usCandidates = await findItunesCandidates(release.artist, release.title, 'US');
-      const usStrict = pickBestItunesMatch(release.artist, release.title, release.releaseDate, usCandidates);
-      matched = usStrict ?? pickDiscogsItunesMatch(release, usCandidates);
-    }
-    if (!matched) {
-      return release;
-    }
-
-    return {
-      ...release,
-      coverUrl: release.coverUrl ?? toHighResArtwork(matched.artworkUrl100),
-      appleArtistUrl: matched.artistViewUrl ?? release.appleArtistUrl,
-      appleAlbumUrl: matched.collectionViewUrl ?? release.appleAlbumUrl,
-      externalLinks: uniqueLinks([
-        ...(release.externalLinks ?? []),
-        ...(matched.collectionViewUrl
-          ? [
-              {
-                label: 'Apple Album',
-                url: matched.collectionViewUrl,
-                source: 'itunes' as const
-              }
-            ]
-          : []),
-        ...(matched.artistViewUrl
-          ? [
-              {
-                label: 'Apple Artist',
-                url: matched.artistViewUrl,
-                source: 'itunes' as const
-              }
-            ]
-          : [])
-      ]),
-      sourceDetails: {
-        ...release.sourceDetails,
-        itunesCollectionId: matched.collectionId
-      }
-    };
-  } catch {
-    return release;
-  }
-}
-
-async function collectDiscogsReleasesForLabel(
-  label: LabelRef,
-  fromDate: string,
-  toDate: string,
-  mode: SearchRequest['timeMode'],
-  country: string,
-  discogsToken?: string
-): Promise<Release[]> {
-  const years = new Set<number>([Number(fromDate.slice(0, 4)), Number(toDate.slice(0, 4))]);
-  const releaseIds = new Set<number>();
-
-  for (const year of years) {
-    const entries = await searchDiscogsByLabelYear(label.name, year, discogsToken);
-    entries.forEach((entry) => releaseIds.add(entry.id));
-  }
-
-  const releases: Release[] = [];
-
-  for (const id of releaseIds) {
-    let detail: Awaited<ReturnType<typeof fetchDiscogsRelease>>;
-    try {
-      detail = await fetchDiscogsRelease(id, discogsToken);
-    } catch {
-      continue;
-    }
-    const releaseYear = detail.year ?? Number(fromDate.slice(0, 4));
-    const releaseDay = discogsReleaseDate(detail.released, releaseYear);
-    const hasExactDate = Boolean(validYmd(detail.released));
-
-    if (mode === 'days' && !hasExactDate) {
-      continue;
-    }
-    if (!inDateRange(releaseDay, fromDate, toDate)) {
-      continue;
-    }
-
-    const mapped: Release = {
-      id: `discogs-${detail.id}`,
-      artist: detail.artist,
-      title: detail.title,
-      releaseDate: releaseDay,
-      genres: resolveGenres(undefined, detail.genres, []),
-      styles: detail.styles,
-      labels: [label.name],
-      type: inferDiscogsType(detail.title, detail.formatDescriptions, detail.trackCount),
-      country: detail.country,
-      trackCount: detail.trackCount,
-      coverUrl: detail.thumb,
-      discogsReleaseUrl: detail.uri,
-      externalLinks: uniqueLinks([
-        ...(detail.uri
-          ? [
-              {
-                label: 'Discogs',
-                url: detail.uri,
-                source: 'discogs' as const
-              }
-            ]
-          : [])
-      ]),
-      sourceDetails: {
-        discogsReleaseId: detail.id
-      },
-      matchedByLabel: [label.name],
-      matchConfidence: 'high',
-      matchedBy: 'discogs'
-    };
-    releases.push(await enrichDiscogsWithItunes(mapped, country));
-  }
-
-  return releases;
-}
-
-function mapBaseRelease(release: MbRelease, label: LabelRef, mode: SearchRequest['sourceMode']): Release {
+export function mapDeezerAlbum(album: DeezerAlbum, label: LabelRef): Release {
   return {
-    id: release.id,
-    artist: releaseArtist(release),
+    ...baseRelease(label, 'deezer'),
+    id: `deezer-${album.id}`,
+    artist: album.artist,
+    title: album.title,
+    releaseDate: album.releaseDate ?? '0000-00-00',
+    genres: resolveGenres(undefined, album.genres),
+    type: mapDeezerRecordType(album.recordType, album.title),
+    trackCount: album.trackCount,
+    barcode: album.upc,
+    coverUrl: album.cover,
+    deezerAlbumUrl: album.link,
+    externalLinks: album.link ? [{ label: 'Deezer', url: album.link, source: 'deezer' }] : [],
+    sourceDetails: { deezerAlbumId: album.id }
+  };
+}
+
+function mbArtist(release: MbRelease): string {
+  const credit = (release['artist-credit'] ?? []).map((entry) => `${entry.name ?? ''}${entry.joinphrase ?? ''}`).join('').trim();
+  return credit || 'Unknown Artist';
+}
+
+export function mapMbRelease(release: MbRelease, label: LabelRef): Release {
+  const formats = [...new Set((release.media ?? []).map((entry) => entry.format?.trim()).filter((entry): entry is string => Boolean(entry)))];
+  const tracks = (release.media ?? []).reduce((sum, media) => sum + (media['track-count'] ?? 0), 0);
+  const url = `https://musicbrainz.org/release/${release.id}`;
+  return {
+    ...baseRelease(label, 'musicbrainz'),
+    id: `mb-${release.id}`,
+    artist: mbArtist(release),
     title: release.title,
-    releaseDate: releaseDate(release),
-    genres: [],
-    labels: [label.name],
+    releaseDate: release.date?.slice(0, 10) ?? '0000-00-00',
+    genres: resolveGenres(undefined, release.genres?.map((entry) => entry.name) ?? [], release.tags?.map((entry) => entry.name) ?? []),
     type: mapReleaseType(release['release-group']?.['primary-type'], release['release-group']?.['secondary-types'], undefined, release.title),
     status: release.status,
     country: release.country,
     barcode: release.barcode,
     packaging: release.packaging,
-    trackCount: trackCount(release),
-    mediaFormat: mediaFormat(release),
-    externalLinks: mapMbExternalLinks(release),
+    trackCount: tracks > 0 ? tracks : undefined,
+    mediaFormat: formats.length > 0 ? formats.join(', ') : undefined,
+    externalLinks: [{ label: 'MusicBrainz', url, source: 'musicbrainz' }],
     sourceDetails: {
       musicbrainzReleaseId: release.id,
       musicbrainzReleaseGroupId: release['release-group']?.id
-    },
-    matchedByLabel: [label.name],
-    matchConfidence: 'none',
-    matchedBy: mode === 'hybrid' ? 'hybrid' : 'musicbrainz'
+    }
   };
 }
 
-async function enrichWithItunes(
-  release: Release,
-  country: string,
-  mbRelease: MbRelease,
-  mbCoverUrl?: string,
-  discogsToken?: string
-): Promise<Release> {
-  let matched = null;
+export function mapDiscogsRelease(detail: DiscogsReleaseDetail, releaseDate: string, label: LabelRef): Release {
+  return {
+    ...baseRelease(label, 'discogs'),
+    id: `discogs-${detail.id}`,
+    artist: detail.artist,
+    title: detail.title,
+    releaseDate,
+    genres: resolveGenres(undefined, detail.genres),
+    styles: detail.styles,
+    type: inferDiscogsType(detail.title, detail.formatDescriptions, detail.trackCount),
+    country: detail.country,
+    trackCount: detail.trackCount,
+    coverUrl: detail.thumb,
+    discogsReleaseUrl: detail.uri,
+    externalLinks: detail.uri ? [{ label: 'Discogs', url: detail.uri, source: 'discogs' }] : [],
+    sourceDetails: { discogsReleaseId: detail.id }
+  };
+}
+
+// ---------- sources ----------
+
+async function resolveMbid(label: LabelRef): Promise<string | undefined> {
+  if (label.mbid) {
+    return label.mbid;
+  }
+  const target = normalizeLabelName(label.name);
+  const candidates = await searchLabels(label.name, 5);
+  return candidates.find((entry) => normalizeLabelName(entry.name) === target)?.id;
+}
+
+async function fromDeezer(label: LabelRef, ctx: SearchContext): Promise<Release[]> {
+  const albums = await findLabelAlbums(label.name, ctx.fromDate, ctx.toDate, ctx.mode);
+  return albums.map((album) => mapDeezerAlbum(album, label));
+}
+
+async function fromMusicBrainz(label: LabelRef, ctx: SearchContext): Promise<Release[]> {
+  const mbid = await resolveMbid(label);
+  if (!mbid) {
+    return [];
+  }
+  const releases = await searchReleasesByLabel(mbid, ctx.fromDate, ctx.toDate, ctx.mode);
+  return releases.map((release) => mapMbRelease(release, label));
+}
+
+async function fromDiscogs(label: LabelRef, ctx: SearchContext): Promise<Release[]> {
+  const viaMb = label.mbid ? await getDiscogsLabelId(label.mbid).catch(() => null) : null;
+  const labelId = viaMb ?? (await findDiscogsLabelIdByName(label.name, ctx.discogsToken));
+  if (!labelId) {
+    throw new Error(`no Discogs label found for "${label.name}"`);
+  }
+
+  const years = [...new Set([Number(ctx.fromDate.slice(0, 4)), Number(ctx.toDate.slice(0, 4))])];
+  const entries = await listLabelReleases(labelId, years, ctx.discogsToken);
+  if (entries.length > DISCOGS_MAX_DETAILS) {
+    void logWarn('Discogs detail lookups capped', { label: label.name, candidates: entries.length, cap: DISCOGS_MAX_DETAILS });
+  }
+
+  // Newest Discogs ids first: recent submissions are the most likely in-window releases.
+  const candidates = [...entries].sort((a, b) => b.id - a.id).slice(0, DISCOGS_MAX_DETAILS);
+  const details = await mapPool(candidates, 4, (entry) => fetchDiscogsRelease(entry.id, ctx.discogsToken).catch(() => null));
+
+  const releases: Release[] = [];
+  for (const detail of details) {
+    if (!detail) {
+      continue;
+    }
+    const exact = validYmd(detail.released);
+    if (ctx.mode === 'days' && !exact) {
+      continue;
+    }
+    const day = exact ?? `${detail.year ?? ctx.fromDate.slice(0, 4)}-01-01`;
+    if (day >= ctx.fromDate && day <= ctx.toDate) {
+      releases.push(mapDiscogsRelease(detail, day, label));
+    }
+  }
+  return releases;
+}
+
+const SOURCES: Record<SourceId, (label: LabelRef, ctx: SearchContext) => Promise<Release[]>> = {
+  deezer: fromDeezer,
+  musicbrainz: fromMusicBrainz,
+  discogs: fromDiscogs
+};
+
+// ---------- enrichment ----------
+
+async function enrichRelease(release: Release, ctx: SearchContext): Promise<Release> {
+  let next = release;
+
+  if (!next.coverUrl && next.sourceDetails.musicbrainzReleaseId) {
+    const cover = await findCoverArtUrl(next.sourceDetails.musicbrainzReleaseId);
+    if (cover) {
+      next = { ...next, coverUrl: cover };
+    }
+  }
+
+  if (next.appleAlbumUrl) {
+    return next;
+  }
+
   try {
-    const candidates = await findItunesCandidates(release.artist, release.title, country);
-    matched = pickBestItunesMatch(release.artist, release.title, release.releaseDate, candidates);
-  } catch {
-    matched = null;
-  }
+    let match = pickItunesMatch(next.artist, next.title, next.releaseDate, await findItunesCandidates(next.artist, next.title, ctx.country));
+    if (!match && ctx.country !== 'US') {
+      match = pickItunesMatch(next.artist, next.title, next.releaseDate, await findItunesCandidates(next.artist, next.title, 'US'));
+    }
+    if (!match) {
+      return next;
+    }
 
-  if (!matched) {
-    let merged: Release = {
-      ...release,
-      coverUrl: mbCoverUrl ?? release.coverUrl,
-      genres: resolveGenres(undefined, mbRelease.genres?.map((entry) => entry.name) ?? [], mbRelease.tags?.map((entry) => entry.name) ?? [])
+    return {
+      ...next,
+      coverUrl: next.coverUrl ?? toHighResArtwork(match.artworkUrl100),
+      appleArtistUrl: match.artistViewUrl,
+      appleAlbumUrl: match.collectionViewUrl,
+      genres: resolveGenres(match.primaryGenreName, next.genres.filter((genre) => genre !== 'Genre unbekannt')),
+      externalLinks: uniqueLinks([
+        ...(next.externalLinks ?? []),
+        ...(match.collectionViewUrl ? [{ label: 'Apple Album', url: match.collectionViewUrl, source: 'itunes' as const }] : []),
+        ...(match.artistViewUrl ? [{ label: 'Apple Artist', url: match.artistViewUrl, source: 'itunes' as const }] : [])
+      ]),
+      sourceDetails: { ...next.sourceDetails, itunesCollectionId: match.collectionId }
     };
-
-    let deezerMatch = null;
-    try {
-      const deezerCandidates = await findDeezerCandidates(release.artist, release.title);
-      deezerMatch = pickBestExternalMatch(release.artist, release.title, release.releaseDate, deezerCandidates);
-    } catch {
-      deezerMatch = null;
-    }
-    if (deezerMatch) {
-      merged = {
-        ...merged,
-        coverUrl: merged.coverUrl ?? deezerMatch.artworkUrl,
-        deezerAlbumUrl: deezerMatch.albumUrl ?? merged.deezerAlbumUrl,
-        externalLinks: uniqueLinks([
-          ...(merged.externalLinks ?? []),
-          ...(deezerMatch.albumUrl
-            ? [
-                {
-                  label: 'Deezer',
-                  url: deezerMatch.albumUrl,
-                  source: 'deezer' as const
-                }
-              ]
-            : [])
-        ]),
-        sourceDetails: {
-          ...merged.sourceDetails,
-          deezerAlbumId: deezerMatch.id
-        },
-        matchConfidence: 'high',
-        matchedBy: 'hybrid-deezer'
-      };
-    }
-
-    let discogsMatch = null;
-    try {
-      const discogsCandidates = await findDiscogsCandidates(release.artist, release.title, discogsToken);
-      discogsMatch = pickBestExternalMatch(release.artist, release.title, release.releaseDate, discogsCandidates);
-    } catch {
-      discogsMatch = null;
-    }
-    if (discogsMatch) {
-      merged = {
-        ...merged,
-        coverUrl: merged.coverUrl ?? discogsMatch.artworkUrl,
-        discogsReleaseUrl: discogsMatch.albumUrl ?? merged.discogsReleaseUrl,
-        externalLinks: uniqueLinks([
-          ...(merged.externalLinks ?? []),
-          ...(discogsMatch.albumUrl
-            ? [
-                {
-                  label: 'Discogs',
-                  url: discogsMatch.albumUrl,
-                  source: 'discogs' as const
-                }
-              ]
-            : [])
-        ]),
-        sourceDetails: {
-          ...merged.sourceDetails,
-          discogsReleaseId: discogsMatch.id
-        },
-        matchConfidence: 'high',
-        matchedBy: merged.matchedBy === 'hybrid-deezer' ? merged.matchedBy : 'hybrid-discogs'
-      };
-    }
-
-    return merged;
+  } catch (error) {
+    void logWarn('iTunes enrichment failed', { artist: next.artist, title: next.title, message: String(error) });
+    return next;
   }
-
-  return {
-    ...release,
-    coverUrl: mbCoverUrl ?? toHighResArtwork(matched.artworkUrl100),
-    appleArtistUrl: matched.artistViewUrl,
-    appleAlbumUrl: matched.collectionViewUrl,
-    externalLinks: uniqueLinks([
-      ...(release.externalLinks ?? []),
-      ...(matched.collectionViewUrl
-        ? [
-            {
-              label: 'Apple Album',
-              url: matched.collectionViewUrl,
-              source: 'itunes' as const
-            }
-          ]
-        : []),
-      ...(matched.artistViewUrl
-        ? [
-            {
-              label: 'Apple Artist',
-              url: matched.artistViewUrl,
-              source: 'itunes' as const
-            }
-          ]
-        : [])
-    ]),
-    type: mapReleaseType(
-      mbRelease['release-group']?.['primary-type'],
-      mbRelease['release-group']?.['secondary-types'],
-      matched.collectionType,
-      release.title
-    ),
-    genres: resolveGenres(
-      matched.primaryGenreName,
-      mbRelease.genres?.map((entry) => entry.name) ?? [],
-      mbRelease.tags?.map((entry) => entry.name) ?? []
-    ),
-    sourceDetails: {
-      ...release.sourceDetails,
-      itunesCollectionId: matched.collectionId
-    },
-    matchConfidence: 'high'
-  };
 }
 
-function mergeRelease(existing: Release, incoming: Release, labelName: string): Release {
-  const labels = new Set([...existing.labels, ...incoming.labels]);
-  const matchedByLabel = new Set([...existing.matchedByLabel, labelName]);
+// ---------- orchestration ----------
 
-  const mergedMatchSource = (() => {
-    const priority: Record<Release['matchedBy'], number> = {
-      musicbrainz: 0,
-      hybrid: 1,
-      discogs: 2,
-      itunes: 3,
-      'hybrid-discogs': 4,
-      'hybrid-deezer': 5
-    };
-    return priority[incoming.matchedBy] >= priority[existing.matchedBy] ? incoming.matchedBy : existing.matchedBy;
-  })();
+async function processLabel(label: LabelRef, sources: SourceId[], ctx: SearchContext, emit: (event: SearchEvent) => void): Promise<Release[]> {
+  const settled = await Promise.allSettled(sources.map((source) => SOURCES[source](label, ctx)));
+  const found: Release[] = [];
 
-  return {
-    ...existing,
-    labels: [...labels],
-    matchedByLabel: [...matchedByLabel],
-    coverUrl: existing.coverUrl ?? incoming.coverUrl,
-    appleArtistUrl: existing.appleArtistUrl ?? incoming.appleArtistUrl,
-    appleAlbumUrl: existing.appleAlbumUrl ?? incoming.appleAlbumUrl,
-    genres: existing.genres.length > 0 ? existing.genres : incoming.genres,
-    styles: (existing.styles?.length ?? 0) > 0 ? existing.styles : incoming.styles,
-    status: existing.status ?? incoming.status,
-    country: existing.country ?? incoming.country,
-    barcode: existing.barcode ?? incoming.barcode,
-    packaging: existing.packaging ?? incoming.packaging,
-    trackCount: existing.trackCount ?? incoming.trackCount,
-    mediaFormat: existing.mediaFormat ?? incoming.mediaFormat,
-    deezerAlbumUrl: existing.deezerAlbumUrl ?? incoming.deezerAlbumUrl,
-    discogsReleaseUrl: existing.discogsReleaseUrl ?? incoming.discogsReleaseUrl,
-    externalLinks: uniqueLinks([...(existing.externalLinks ?? []), ...(incoming.externalLinks ?? [])]),
-    sourceDetails: {
-      ...existing.sourceDetails,
-      ...incoming.sourceDetails
-    },
-    matchedBy: mergedMatchSource,
-    matchConfidence: existing.matchConfidence === 'high' || incoming.matchConfidence === 'high' ? 'high' : 'none'
-  };
+  settled.forEach((result, index) => {
+    const source = sources[index];
+    if (result.status === 'fulfilled') {
+      found.push(...result.value);
+      return;
+    }
+    const message = friendlyProviderError(source, result.reason);
+    void logWarn('Label source failed', { label: label.name, source, message });
+    emit({ type: 'failure', failure: { label, source, message } });
+  });
+
+  const merged = mergeReleases(found);
+  if (merged.length === 0) {
+    return [];
+  }
+  emit({ type: 'releases', label, releases: merged });
+
+  const enriched = await mapPool(merged, ENRICH_CONCURRENCY, (release) => enrichRelease(release, ctx));
+  const changed = enriched.filter((release, index) => release !== merged[index]);
+  if (changed.length > 0) {
+    emit({ type: 'releases', label, releases: changed });
+  }
+  return enriched;
 }
 
-export async function findReleases(input: SearchRequest): Promise<SearchResult> {
+/**
+ * Streams results label by label. Resolves with the final merged list once all labels are done.
+ */
+export async function searchReleases(input: SearchRequest, emit: (event: SearchEvent) => void, signal?: AbortSignal): Promise<SearchResult> {
   const { fromDate, toDate } = computeDateRange(input.timeMode, input.timeValue, input.timezone);
-
-  const releaseMap = new Map<string, Release>();
+  const sources = SOURCE_ORDER.filter((source) => input.sources.includes(source));
+  const ctx: SearchContext = { fromDate, toDate, mode: input.timeMode, country: input.country, discogsToken: input.discogsToken };
   const failures: LabelFailure[] = [];
+  const collected: Release[] = [];
+  let completed = 0;
 
-  for (const label of input.labels) {
+  const forward = (event: SearchEvent): void => {
+    if (event.type === 'failure') {
+      failures.push(event.failure);
+    }
+    emit(event);
+  };
+
+  emit({ type: 'start', fromDate, toDate, totalLabels: input.labels.length });
+
+  await mapPool(input.labels, LABEL_CONCURRENCY, async (label) => {
+    if (signal?.aborted) {
+      return;
+    }
     try {
-      const mbReleases = input.sourceMode === 'discogs' ? [] : await searchReleasesByLabel(label, fromDate, toDate);
-
-      for (const mbRelease of mbReleases) {
-        let mapped = mapBaseRelease(mbRelease, label, input.sourceMode);
-        const mbCoverUrl = await findCoverArtUrl(mbRelease.id);
-        if (mbCoverUrl) {
-          mapped.coverUrl = mbCoverUrl;
-        }
-
-        if (input.sourceMode === 'hybrid') {
-          mapped = await enrichWithItunes(mapped, input.country, mbRelease, mbCoverUrl, input.discogsToken);
-        } else if (input.sourceMode === 'musicbrainz') {
-          mapped.genres = resolveGenres(
-            undefined,
-            mbRelease.genres?.map((entry) => entry.name) ?? [],
-            mbRelease.tags?.map((entry) => entry.name) ?? []
-          );
-        }
-
-        const key = dedupeReleaseKey(mapped.artist, mapped.title, mapped.releaseDate);
-        const current = releaseMap.get(key);
-        if (current) {
-          releaseMap.set(key, mergeRelease(current, mapped, label.name));
-        } else {
-          releaseMap.set(key, mapped);
-        }
-      }
+      collected.push(...(await processLabel(label, sources, ctx, forward)));
     } catch (error) {
-      void logWarn('Label processing failed', {
-        label: label.name,
-        sourceMode: input.sourceMode,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      failures.push({
-        label,
-        message: error instanceof Error ? friendlyProviderError(error.message) : 'Unknown provider error'
-      });
+      forward({ type: 'failure', failure: { label, message: error instanceof Error ? error.message : String(error) } });
     }
-  }
+    completed += 1;
+    emit({ type: 'labelDone', label, completed, totalLabels: input.labels.length });
+  });
 
-  if (input.sourceMode === 'discogs') {
-    for (const label of input.labels) {
-      try {
-        const discogsReleases = await collectDiscogsReleasesForLabel(
-          label,
-          fromDate,
-          toDate,
-          input.timeMode,
-          input.country,
-          input.discogsToken
-        );
-        for (const mapped of discogsReleases) {
-          const key = dedupeReleaseKey(mapped.artist, mapped.title, mapped.releaseDate);
-          const current = releaseMap.get(key);
-          if (current) {
-            releaseMap.set(key, mergeRelease(current, mapped, label.name));
-          } else {
-            releaseMap.set(key, mapped);
-          }
-        }
-      } catch (error) {
-        void logWarn('Discogs primary search failed', {
-          label: label.name,
-          message: error instanceof Error ? error.message : String(error)
-        });
-        failures.push({
-          label,
-          message: error instanceof Error ? friendlyProviderError(error.message) : 'Unknown provider error'
-        });
-      }
-    }
-  }
+  return { releases: mergeReleases(collected), fromDate, toDate, partialFailures: failures };
+}
 
-  const releases = [...releaseMap.values()].sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));
+/** Non-streaming variant (used by `POST /api/releases/search` and tests). */
+export function findReleases(input: SearchRequest): Promise<SearchResult> {
+  return searchReleases(input, () => undefined);
+}
 
+export function buildMeta(input: SearchRequest, result: SearchResult): SearchMeta {
   return {
-    releases,
-    fromDate,
-    toDate,
-    partialFailures: failures
+    sources: input.sources,
+    timeMode: input.timeMode,
+    timeValue: input.timeValue,
+    country: input.country,
+    fromDate: result.fromDate,
+    toDate: result.toDate,
+    searchedAt: new Date().toISOString(),
+    partialFailures: result.partialFailures
   };
 }

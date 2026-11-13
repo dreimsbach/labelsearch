@@ -1,4 +1,5 @@
-import type { LabelRef, Release, SourceMode, TimeMode } from '../../shared/types';
+import { ALL_SOURCES, DEFAULT_SOURCES } from '../../shared/types';
+import type { LabelRef, Release, SourceId, TimeMode } from '../../shared/types';
 
 const LABELS_KEY = 'labelsearch.labels';
 const SETTINGS_KEY = 'labelsearch.settings';
@@ -8,7 +9,7 @@ export interface Settings {
   timeMode: TimeMode;
   timeValue: number;
   country: string;
-  sourceMode: SourceMode;
+  sources: SourceId[];
   discogsToken: string;
 }
 
@@ -16,70 +17,76 @@ const defaultSettings: Settings = {
   timeMode: 'days',
   timeValue: 7,
   country: 'DE',
-  sourceMode: 'discogs',
+  sources: DEFAULT_SOURCES,
   discogsToken: ''
 };
 
-function toSourceMode(value: unknown): SourceMode {
-  if (value === 'hybrid' || value === 'musicbrainz' || value === 'discogs') {
-    return value;
+/** Stable identity for a label in the list (MBID when known, otherwise the name). */
+export function labelKey(label: LabelRef): string {
+  return label.mbid ?? `name:${label.name.trim().toLowerCase()}`;
+}
+
+function toSources(value: unknown): SourceId[] {
+  if (!Array.isArray(value)) {
+    // Settings from before the source checkboxes (`sourceMode`) start with the new defaults.
+    return defaultSettings.sources;
   }
-  return defaultSettings.sourceMode;
+  const sources = value.filter((entry): entry is SourceId => ALL_SOURCES.includes(entry));
+  return sources.length > 0 ? sources : defaultSettings.sources;
+}
+
+function read<T>(key: string): T | undefined {
+  try {
+    const data = localStorage.getItem(key);
+    return data ? (JSON.parse(data) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function write(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // storage full or unavailable: settings simply aren't remembered
+  }
 }
 
 export function loadLabels(): LabelRef[] {
-  try {
-    const data = localStorage.getItem(LABELS_KEY);
-    if (!data) {
-      return [];
-    }
-    const parsed = JSON.parse(data) as LabelRef[];
-    return parsed.filter((entry) => entry.mbid && entry.name);
-  } catch {
-    return [];
-  }
+  const parsed = read<LabelRef[]>(LABELS_KEY) ?? [];
+  return parsed
+    .filter((entry) => typeof entry?.name === 'string' && entry.name.trim())
+    .map((entry) => ({ name: entry.name, mbid: entry.mbid || undefined }));
 }
 
 export function saveLabels(labels: LabelRef[]): void {
-  localStorage.setItem(LABELS_KEY, JSON.stringify(labels));
+  write(LABELS_KEY, labels);
 }
 
 export function loadSettings(): Settings {
-  try {
-    const data = localStorage.getItem(SETTINGS_KEY);
-    if (!data) {
-      return defaultSettings;
-    }
-    const parsed = JSON.parse(data) as Partial<Settings> & { daysBack?: number };
-    return {
-      ...defaultSettings,
-      ...parsed,
-      timeMode: parsed.timeMode ?? 'days',
-      timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue,
-      sourceMode: toSourceMode(parsed.sourceMode),
-      discogsToken: typeof parsed.discogsToken === 'string' ? parsed.discogsToken : ''
-    };
-  } catch {
+  const parsed = read<Partial<Settings> & { daysBack?: number }>(SETTINGS_KEY);
+  if (!parsed) {
     return defaultSettings;
   }
+  return {
+    timeMode: parsed.timeMode === 'year' ? 'year' : 'days',
+    timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue,
+    country: parsed.country ?? defaultSettings.country,
+    sources: toSources(parsed.sources),
+    discogsToken: typeof parsed.discogsToken === 'string' ? parsed.discogsToken : ''
+  };
 }
 
 export function saveSettings(settings: Settings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  write(SETTINGS_KEY, settings);
 }
 
 export function loadResults(): Release[] {
-  try {
-    const data = localStorage.getItem(RESULTS_KEY);
-    if (!data) {
-      return [];
-    }
-    return JSON.parse(data) as Release[];
-  } catch {
-    return [];
-  }
+  const releases = read<Release[]>(RESULTS_KEY) ?? [];
+  // Results cached by older versions lack `foundBy`.
+  return releases.map((release) => ({ ...release, foundBy: release.foundBy ?? [] }));
 }
 
 export function saveResults(results: Release[]): void {
-  localStorage.setItem(RESULTS_KEY, JSON.stringify(results));
+  write(RESULTS_KEY, results);
 }

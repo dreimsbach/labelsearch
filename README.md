@@ -1,41 +1,41 @@
 # Label Release Tracker
 
-Modern web app to track record-label releases with selectable primary source (**MusicBrainz, Discogs, iTunes**) and enrichment (**iTunes, Deezer, Discogs**).
+Modern web app to find new releases of your record labels. Primary sources: **Deezer** and **MusicBrainz** (optional **Discogs** for vinyl-only labels), enriched with **iTunes** (Apple Music links, genre) and **Cover Art Archive**.
 
 ## Features
 
-- Label management with MBID-backed selection
+- Label management with MusicBrainz MBID resolution; labels without a MusicBrainz match are kept by name (dashed chip) and still searched on Deezer/Discogs
 - Search window config with selector:
   - `Days` mode (default `7`): searches the last N days including today
   - `Year` mode (e.g. `2026`): searches all releases in that year
-- Country dropdown (default `DE`)
-- Optional Discogs token input (per search/session, stored locally)
-- Source mode dropdown:
-  - `discogs` (default): Discogs primary search + iTunes Apple-link enrichment
-  - `hybrid`: MusicBrainz search + iTunes enrichment
-  - `musicbrainz`
-- Direct search behavior:
-  - without selected candidate: uses the first label result for input query
-  - with selected candidate from result list: button switches to `Search with selected label`
-- Release grid with:
-  - incremental rendering during multi-label searches (cards appear as soon as each label response arrives)
-  - in-panel loading indicator (`Loading more releases...`) while additional results are still being fetched
-  - cover
-  - artist
-  - title
-  - release date
-  - genres (1-3, fallback strategy)
-  - styles (when available from source providers)
-  - label(s)
-  - intentionally reduced UI detail set (no extra metadata block in cards)
-  - Apple Music desktop-app deep links (`music://`) for artist + album when available (icon buttons)
+- Country dropdown (default `DE`, iTunes storefront with `US` fallback)
+- Source checkboxes:
+  - `Deezer` (default on): fast, best coverage for new digital releases
+  - `MusicBrainz` (default on): curated, exact label IDs
+  - `Discogs` (default off): for vinyl-only labels; slow and lags for brand-new releases. Optional token input appears when selected.
+- One streamed search request: cards appear label by label and get Apple links/covers as soon as enrichment finishes; `Cancel` stops a running search
+- Duplicate releases across sources and labels are merged into one card (title + artist, featured artists and ` - EP` suffixes tolerated, dates within 14 days)
+- Partial failures are shown per label and source; one failing source never hides results of the others
+- Server-side provider cache (persisted to `data/cache.json`): a repeated search is answered almost instantly
+- Release grid with cover, artist, title, release date, genres (1-3), styles (Discogs), label(s)
+- Apple Music desktop-app deep links (`music://`) for artist + album when available, otherwise a copy `Artist + Album` button
 - TXT/CSV upload for batch label import (line-based, supports comment lines starting with `#`)
 - Export of current label list as `.txt` in import-compatible format (includes comment header)
 - Local persistence via `localStorage`
 - Responsive UI for desktop/tablet/mobile
-- Cover priority in `hybrid/musicbrainz`: Cover Art Archive (MB, forced to `front-1200`) -> Deezer -> iTunes -> Discogs
 - Collapsible on-page instruction section explaining workflow and import format
-- Improved action button hierarchy (primary search actions + secondary utility actions)
+
+## How the search works
+
+Per label, all selected sources run in parallel:
+
+- **Deezer**: `label:"<name>"` album search, walked newest-ingested first (Deezer ids grow over time). Album details are checked for an exact label match (after removing words like `Records`/`Ltd.`) and the date window. The walk stops after 10 albums released more than 180 days before the window, which is usually 20-40 requests per label.
+- **MusicBrainz**: `laid:<MBID> AND date:[from TO to]`, only exact dates in `Days` mode.
+- **Discogs**: exact label id (via MusicBrainz URL relation or exact name), label release listing filtered by year, then release details for the exact date.
+
+Every provider has its own rate limiter (Deezer 40/5 s, MusicBrainz 1/1.1 s, iTunes 20/min, Discogs 55/min with token, 22/min without). Throttling responses pause that provider and are retried with `Retry-After`/backoff.
+
+Measured on 2026-11-13 (four releases out that day on Erased Tapes, Nonesuch, Latency, CINTH): Deezer + MusicBrainz found 3/4 in ~21 s for all four labels; the old Discogs-only mode found 0/4. CINTH's EP is only on Apple Music, whose label API needs a paid Apple Developer account.
 
 ## Tech Stack
 
@@ -103,6 +103,8 @@ Then open `http://localhost:8787`.
 
 Image build/runtime uses `node:22-alpine` (multi-stage) to keep the final container smaller.
 
+The provider cache lives in `/app/data` (`CACHE_FILE_PATH=/app/data/cache.json`); `docker-compose.yml` mounts the named volume `labelsearch-data` there so it survives restarts.
+
 ### Health Check
 
 ```bash
@@ -131,33 +133,45 @@ Required GitHub repository secrets:
 
 - `PORT` (default: `8787`)
 - `NODE_ENV` (default: `production` in container)
-- `MB_USER_AGENT` (recommended for MusicBrainz requests)
+- `MB_USER_AGENT` (optional; defaults to the neutral placeholder `example-app/0.0.0`)
 - `LOG_FILE_PATH` (optional; default `./logs/app.log`)
 - `DISCOGS_TOKEN` (optional; improves Discogs rate limits)
-- `DISCOGS_USER_AGENT` (optional; defaults to app User-Agent)
+- `DISCOGS_USER_AGENT` (optional; defaults to the neutral placeholder `example-app/0.0.0`)
+- `CACHE_FILE_PATH` (optional; default `./data/cache.json`, `/app/data/cache.json` in the container; set to an empty value to keep the cache in memory only)
+- Default User-Agents deliberately contain no traceable data (no e-mail, repo link, URL or name). Set your own value via env only if you want to.
 - Request-level token precedence: token entered in UI (`discogsToken`) is used first; if empty, backend falls back to env `DISCOGS_TOKEN`.
 
 ## API Endpoints
 
 - `GET /api/health`
 - `GET /api/labels/search?q=<term>&limit=<n>`
-- `POST /api/releases/search`
+- `POST /api/releases/stream` (NDJSON event stream, used by the UI)
+- `POST /api/releases/search` (same search, single JSON response)
 
-Request/response details are documented in [docs/SPEC.md](/Users/dreimsbach/repos/labelsearch/docs/SPEC.md).
+Request body: `{ labels: [{ name, mbid? }], timeMode, timeValue, country, sources: ["deezer","musicbrainz","discogs"], timezone, discogsToken? }`. The legacy `sourceMode` field is still accepted.
+
+Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
 ## Notes
 
-- MusicBrainz requests are throttled (~1 req/s).
-- Discogs primary mode (`sourceMode=discogs`) uses label+year search plus release-detail lookups for exact date filtering via `released` (needed for day-level precision).
-- Discogs calls are queued/throttled and retried on `429` (`~25/min` without token, `~60/min` with token target pacing).
-- In Discogs primary mode, Apple artist/album links are additionally generated via iTunes candidate matching when confidence is high.
-- External fallback matching (Deezer/Discogs) uses strict artist/title/date checks (date must be within ±7 days).
-- If enrichment providers fail, MusicBrainz release entries are still shown.
-- Cover selection in `hybrid/musicbrainz` prefers Cover Art Archive by MB release ID to reduce incorrect iTunes artwork matches.
-- Cover rendering normalizes Apple artwork URLs at runtime to a high-resolution variant.
+- Discogs tokens are sent as `Authorization` header and redacted from errors/logs.
+- If enrichment (iTunes, Cover Art Archive) fails, releases are still shown.
+- Cover priority: Deezer -> Discogs -> Cover Art Archive -> iTunes. Apple artwork URLs are normalized to a high-resolution variant.
+- Year searches for old years cannot use the Deezer early stop and are capped at 400 album lookups per label.
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-11-13
+
+- Reworked search for reliability and speed: Deezer + MusicBrainz are the default sources and run in parallel per label; Discogs is optional and uses exact label ids instead of fuzzy label search.
+- Source dropdown replaced by source checkboxes (`sources` in the API; `sourceMode` still accepted).
+- New streamed endpoint `POST /api/releases/stream`; the UI sends one request, renders label by label and can cancel.
+- Per-provider rate limiters with `Retry-After` handling, single retry layer, persistent provider cache (`CACHE_FILE_PATH`, Docker volume `/app/data`).
+- Labels without a MusicBrainz match are kept by name instead of being dropped on import.
+- Better dedupe across sources (featured artists, ` - EP` suffix, small date drift) and iTunes matching for multi-artist credits.
+- Fixed: MusicBrainz year-only dates leaking into day searches, Discogs token in URLs/logs, date window depending on server timezone.
+- Default User-Agents for MusicBrainz and Discogs (code and `docker-compose.yml`) are now the neutral placeholder `example-app/0.0.0` without any traceable contact data.
 
 ### 2026-03-20
 

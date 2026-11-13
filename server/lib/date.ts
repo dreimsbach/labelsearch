@@ -18,15 +18,13 @@ export function computeDateRange(mode: TimeMode, value: number, timezone: string
     };
   }
 
-  const now = new Date();
-  const toDate = toLocalYmd(now, timezone);
-
-  const localMidnight = new Date(`${toDate}T00:00:00`);
-  const from = new Date(localMidnight);
-  from.setDate(from.getDate() - Math.max(0, value - 1));
+  // "today" in the user's timezone; day arithmetic in UTC so the server timezone never shifts it.
+  const toDate = toLocalYmd(new Date(), timezone);
+  const from = new Date(`${toDate}T00:00:00Z`);
+  from.setUTCDate(from.getUTCDate() - Math.max(0, value - 1));
 
   return {
-    fromDate: toLocalYmd(from, timezone),
+    fromDate: from.toISOString().slice(0, 10),
     toDate
   };
 }

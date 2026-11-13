@@ -257,6 +257,42 @@ a:focus-visible {
   cursor: pointer;
 }
 
+.label-chip.name-only {
+  border-style: dashed;
+}
+
+.source-picker {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 12px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.source-picker legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.source-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.source-option input {
+  margin-top: 3px;
+  accent-color: var(--primary);
+}
+
+.source-option small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .progress,
 .error,
 .warning-list {

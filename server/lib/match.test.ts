@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapReleaseType, pickBestExternalMatch, pickBestItunesMatch, resolveGenres, scoreCandidate, scoreExternalCandidate } from './match.js';
+import { mapDeezerRecordType, mapReleaseType, pickBestItunesMatch, pickLooseItunesMatch, resolveGenres, scoreCandidate } from './match.js';
 
 describe('match helpers', () => {
   it('scores exact match at 100', () => {
@@ -35,28 +35,20 @@ describe('match helpers', () => {
     expect(resolveGenres('Indie-Pop', ['Indie Rock'], ['dream pop', 'dream pop'])).toEqual(['Indie-Pop', 'Indie Rock', 'dream pop']);
   });
 
-  it('scores external candidate with strict date requirement', () => {
-    const score = scoreExternalCandidate('Simo Cell', 'MURMURATIONS', '2026-03-12', {
-      source: 'deezer',
-      id: 1,
-      artistName: 'Simo Cell',
-      collectionName: 'MURMURATIONS',
-      releaseDate: '2026-03-12'
-    });
-
-    expect(score).toBeGreaterThanOrEqual(80);
+  it('loose match requires date proximity', () => {
+    const candidate = {
+      collectionId: 3,
+      artistName: 'Efdemin & VRIL',
+      collectionName: 'Endless / Purge - EP',
+      releaseDate: '2026-11-13T08:00:00Z'
+    };
+    expect(pickLooseItunesMatch('Efdemin', 'Endless / Purge', '2026-11-13', [candidate])?.collectionId).toBe(3);
+    expect(pickLooseItunesMatch('Efdemin', 'Endless / Purge', '2021-05-01', [candidate])).toBeNull();
   });
 
-  it('rejects external candidates without usable date proximity', () => {
-    const picked = pickBestExternalMatch('Simo Cell', 'MURMURATIONS', '2026-03-12', [
-      {
-        source: 'deezer',
-        id: 2,
-        artistName: 'Simo Cell',
-        collectionName: 'MURMURATIONS'
-      }
-    ]);
-
-    expect(picked).toBeNull();
+  it('maps Deezer record types', () => {
+    expect(mapDeezerRecordType('ep')).toBe('EP');
+    expect(mapDeezerRecordType('single', 'Purge EP')).toBe('EP');
+    expect(mapDeezerRecordType('compile')).toBe('Album');
   });
 });
