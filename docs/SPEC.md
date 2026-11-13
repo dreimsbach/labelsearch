@@ -497,6 +497,10 @@ Required checks:
 
 ## 11. Changelog
 
+### 2026-11-13 (Release v0.3.0)
+
+- Release `v0.3.0` (package version `0.3.0`; `0.2.0` was already used by an earlier tag) containing the v2 search rework and source chips below.
+
 ### 2026-11-13
 
 - v2 provider architecture: Deezer (`label:"…"` search, id-descending walk with early stop, exact label match) and MusicBrainz as default primary sources, queried per label in parallel; Discogs becomes an optional source using exact label ids (MusicBrainz URL relation or exact name) instead of fuzzy label+year search.

@@ -162,6 +162,10 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
 ## Changelog
 
+### 2026-11-13 (Release v0.3.0)
+
+- Release `v0.3.0` (package version `0.3.0`; `0.2.0` was already used by an earlier tag) containing the v2 search rework and source chips below.
+
 ### 2026-11-13
 
 - Reworked search for reliability and speed: Deezer + MusicBrainz are the default sources and run in parallel per label; Discogs is optional and uses exact label ids instead of fuzzy label search.
