@@ -146,6 +146,15 @@ export interface FeedState {
   discogsTokenConfigured: boolean;
 }
 
+/** Small polling payload: run progress without any releases. */
+export interface FeedStatus {
+  running: boolean;
+  completed: number;
+  total: number;
+  error?: string;
+  snapshotFinishedAt: string | null;
+}
+
 export interface FeedConfigUpdate {
   labels?: LabelRef[];
   settings?: Partial<FeedSettings>;

@@ -1,4 +1,4 @@
-import type { FeedConfigUpdate, FeedState, LabelSearchResult, SearchEvent, SearchRequest } from '../../shared/types';
+import type { FeedConfigUpdate, FeedState, FeedStatus, LabelSearchResult, SearchEvent, SearchRequest } from '../../shared/types';
 
 async function json<T>(response: Response, fallback: string): Promise<T> {
   if (!response.ok) {
@@ -10,6 +10,10 @@ async function json<T>(response: Response, fallback: string): Promise<T> {
 
 export async function getFeed(): Promise<FeedState> {
   return json<FeedState>(await fetch('/api/feed'), 'Could not load feed');
+}
+
+export async function getFeedStatus(): Promise<FeedStatus> {
+  return json<FeedStatus>(await fetch('/api/feed/status'), 'Could not load status');
 }
 
 export async function updateFeedConfig(update: FeedConfigUpdate): Promise<FeedState> {

@@ -7,6 +7,7 @@ import type {
   FeedSettings,
   FeedSnapshot,
   FeedState,
+  FeedStatus,
   LabelRef,
   Release,
   RunTrigger,
@@ -166,6 +167,9 @@ function idleRun(): FeedRun {
 export class Feed {
   private state: PersistedState = { labels: [], settings: DEFAULT_SETTINGS, snapshot: null, firstSeen: {} };
   private run: FeedRun = idleRun();
+  /** Releases of the running run, keyed per label; merged only when someone asks for them. */
+  private runFound = new Map<string, Release>();
+  private runMerged: Release[] | null = [];
   private current: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
   private readonly search: typeof searchReleases;
@@ -209,14 +213,25 @@ export class Feed {
       timezone: this.options.schedule.timezone,
       nextRunDay: nextRunDay(this.now(), this.options.schedule, this.state.lastScheduledDay)
     };
+    this.runMerged ??= mergeReleases([...this.runFound.values()]);
     return {
       labels: this.state.labels,
       settings: this.state.settings,
       snapshot: this.state.snapshot,
-      run: this.run,
+      run: { ...this.run, releases: this.runMerged },
       schedule,
       retentionDays: this.retentionDays,
       discogsTokenConfigured: Boolean(process.env.DISCOGS_TOKEN?.trim())
+    };
+  }
+
+  getStatus(): FeedStatus {
+    return {
+      running: this.run.running,
+      completed: this.run.completed,
+      total: this.run.total,
+      error: this.run.error,
+      snapshotFinishedAt: this.state.snapshot?.finishedAt ?? null
     };
   }
 
@@ -271,15 +286,16 @@ export class Feed {
       timezone: this.options.schedule.timezone
     };
     // Keyed per label so a release found for two labels keeps both label names.
-    const byKey = new Map<string, Release>();
+    this.runFound = new Map();
+    this.runMerged = [];
     void logInfo('Feed run started', { trigger, labels: labels.length });
 
     try {
       const result = await this.search(request, (event) => {
         if (event.type === 'releases') {
           const labelKey = event.label.mbid ?? event.label.name.toLowerCase();
-          event.releases.forEach((release) => byKey.set(`${labelKey}::${release.id}`, release));
-          this.run = { ...this.run, releases: mergeReleases([...byKey.values()]) };
+          event.releases.forEach((release) => this.runFound.set(`${labelKey}::${release.id}`, release));
+          this.runMerged = null;
         } else if (event.type === 'failure') {
           this.run = { ...this.run, failures: [...this.run.failures, event.failure] };
         } else if (event.type === 'labelDone') {
@@ -298,10 +314,14 @@ export class Feed {
         finishedAt
       };
       this.run = idleRun();
+      this.runFound = new Map();
+      this.runMerged = [];
       void logInfo('Feed run finished', { trigger, releases: result.releases.length, failures: result.partialFailures.length });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.run = { ...idleRun(), error: message };
+      this.runFound = new Map();
+      this.runMerged = [];
       void logError('Feed run failed', { trigger, error: message });
     }
     await this.persist();

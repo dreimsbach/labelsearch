@@ -40,8 +40,10 @@ Behavior:
 
 - Feed view (default): latest snapshot is shown immediately on page load, with result count, date window, `updated <date time>` and `next refresh <day>, <time>`
 - `New` badge (and highlighted card border) for releases whose `firstSeenAt` is later than the browser's previous visit; header shows `<n> new since your last visit`
-- `Refresh now` starts a server run; while it runs the previous snapshot stays visible and a progress line shows `Refreshing x / n labels` (the page polls every 2 s while running, every 60 s otherwise)
-- Without any snapshot yet, results of the running refresh are shown as they arrive
+- `Refresh now` starts a server run; while it runs the previous snapshot stays visible and a progress line shows `Refreshing x / n labels`
+- Polling uses the small `GET /api/feed/status` (every 3 s while running, every 60 s otherwise); the full feed is only reloaded when a run finished or a new snapshot exists
+- Without any snapshot yet, partial results of the running refresh are reloaded every 15 s
+- Card covers are requested at ~500–600 px (Apple `600x600bb`, Deezer `500x500`, Cover Art Archive `front-500`); stored URLs keep the large variant
 - Direct search view: results of a one-off search for one label stream in; `Back to feed` returns to the feed (and aborts a running direct search)
 - Loading state with skeleton cards
 - Empty states: no labels yet (`Add labels to start your feed.`), no releases in range, no releases for a direct search
@@ -233,7 +235,7 @@ Rules:
   - other `4xx` fail immediately
   - default 3 retries, 10 s timeout
 - Search concurrency: 4 labels at once, 3 enrichments per label at once; provider limiters cap the real request rate.
-- Cache: in-memory read-through cache with in-flight dedupe, persisted as JSON to `CACHE_FILE_PATH` (default `data/cache.json`, empty value disables persistence). Max 50,000 entries, saved debounced (5 s) and on `SIGINT`/`SIGTERM`.
+- Cache: in-memory read-through cache with in-flight dedupe, persisted as JSON to `CACHE_FILE_PATH` (default `data/cache.json`, empty value disables persistence). Max 50,000 entries, saved at most every 30 s and on `SIGINT`/`SIGTERM`.
 - A repeated search with a warm cache completes without external requests (measured: 7 labels, 34 s cold → <0.1 s warm).
 
 ## 4.8 Daily Feed
@@ -360,6 +362,8 @@ Response:
   - `discogsTokenConfigured`
 - `PUT /api/feed/config` with `{ labels?, settings? }` → `FeedState`. Labels are deduped (MBID or lower-cased name), max 500; settings are validated and merged into the current ones.
 - `POST /api/feed/run` → `202` with `FeedState` when a run started, `200` when one was already running.
+- `GET /api/feed/status` → `{ running, completed, total, error?, snapshotFinishedAt }` (no releases; for polling)
+- Partial results of a running run are merged only when `GET /api/feed` is requested, not on every provider event.
 
 ## 6.4 Search request body (direct search)
 
@@ -544,6 +548,7 @@ Required checks:
 - `firstSeenAt` per release and `New` badges for releases since the browser's previous visit.
 - Label import: `Add from file` and `Replace from file`; `Clear all` and replace ask for confirmation; MusicBrainz resolution only accepts exact name matches.
 - One-time migration of browser-stored labels/settings to the server.
+- Lower load during runs: UI polls `GET /api/feed/status` instead of the full feed, partial results are merged on demand, cache saves at most every 30 s, card covers use ~500–600 px images.
 - Direct search for a single label kept as a separate view (`Back to feed`).
 - Discogs token is server configuration only (UI field removed).
 - MusicBrainz label queries escape Lucene special characters.

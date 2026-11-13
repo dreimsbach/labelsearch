@@ -4,13 +4,15 @@ import type { FeedSettings, FeedState, LabelRef, LabelSearchResult, Release, Sou
 import { LabelChip } from './components/LabelChip';
 import { ReleaseCard } from './components/ReleaseCard';
 import { ReleaseSkeleton } from './components/ReleaseSkeleton';
-import { getFeed, searchLabels, startFeedRun, streamReleases, updateFeedConfig } from './lib/api';
+import { getFeed, getFeedStatus, searchLabels, startFeedRun, streamReleases, updateFeedConfig } from './lib/api';
 import { parseLabelText } from './lib/csv';
 import { labelKey, markLegacyMigrated, takeLastVisit, takeLegacyConfig } from './lib/storage';
 
 const COUNTRIES = ['DE', 'US', 'GB', 'FR', 'JP'];
-const POLL_RUNNING_MS = 2_000;
+const POLL_RUNNING_MS = 3_000;
 const POLL_IDLE_MS = 60_000;
+/** Without a snapshot yet, partial results of the first run are reloaded at this pace. */
+const PARTIAL_RELOAD_MS = 15_000;
 const SETTINGS_SAVE_DELAY_MS = 500;
 const MAX_DAYS = 31;
 
@@ -103,22 +105,46 @@ export function App(): JSX.Element {
     })();
   }, []);
 
-  // Poll quickly while a refresh runs, slowly otherwise to pick up the daily run.
-  // Labels and settings stay local: they may hold edits that are still being saved.
+  // Poll only the small status payload; reload the full feed (all releases) only when a run
+  // finished or a new snapshot exists. Labels and settings stay local: they may hold unsaved edits.
+  const snapshotFinishedAt = feed?.snapshot?.finishedAt ?? null;
+  const hasSnapshot = snapshotFinishedAt !== null;
   useEffect(() => {
     if (!loaded) {
       return undefined;
     }
+    let lastPartialReload = Date.now();
+    const reloadFeed = (): void => {
+      getFeed()
+        .then((state) => setFeed((prev) => (prev ? { ...state, labels: prev.labels, settings: prev.settings } : state)))
+        .catch(() => undefined);
+    };
     const timer = window.setInterval(
       () => {
-        getFeed()
-          .then((state) => setFeed((prev) => (prev ? { ...state, labels: prev.labels, settings: prev.settings } : state)))
+        getFeedStatus()
+          .then((status) => {
+            const finished = running && !status.running;
+            if (finished || status.snapshotFinishedAt !== snapshotFinishedAt) {
+              reloadFeed();
+              return;
+            }
+            if (status.running && !hasSnapshot && Date.now() - lastPartialReload >= PARTIAL_RELOAD_MS) {
+              lastPartialReload = Date.now();
+              reloadFeed();
+              return;
+            }
+            setFeed((prev) =>
+              prev
+                ? { ...prev, run: { ...prev.run, running: status.running, completed: status.completed, total: status.total, error: status.error } }
+                : prev
+            );
+          })
           .catch(() => undefined);
       },
       running ? POLL_RUNNING_MS : POLL_IDLE_MS
     );
     return () => window.clearInterval(timer);
-  }, [loaded, running]);
+  }, [loaded, running, snapshotFinishedAt, hasSnapshot]);
 
   async function saveLabels(next: LabelRef[]): Promise<void> {
     setFeed((prev) => (prev ? { ...prev, labels: next } : prev));

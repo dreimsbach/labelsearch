@@ -163,6 +163,7 @@ Required GitHub repository secrets:
 - `GET /api/feed` (labels, settings, latest snapshot, run progress, schedule)
 - `PUT /api/feed/config` (`{ labels?, settings? }`)
 - `POST /api/feed/run` (start a refresh now)
+- `GET /api/feed/status` (run progress only, used for polling)
 - `POST /api/releases/stream` (direct search, NDJSON event stream)
 - `POST /api/releases/search` (direct search, single JSON response)
 
@@ -189,6 +190,7 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 - Label import can add to (`Add from file`) or replace (`Replace from file`) the list; replacing and clearing ask for confirmation.
 - Imported names are only linked to a MusicBrainz label on an exact name match; otherwise they are kept by name.
 - `Search directly` stays available as a one-off search next to the feed.
+- Less CPU while a refresh runs: the page polls a small status endpoint instead of reloading all results every 2 s, and release cards load ~500–600 px covers instead of 1000–1200 px.
 - Discogs token moved from the UI to the server env `DISCOGS_TOKEN`.
 - Label names with special characters (e.g. `o*rs`) no longer break the MusicBrainz lookup.
 

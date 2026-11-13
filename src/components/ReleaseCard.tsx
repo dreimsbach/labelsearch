@@ -9,12 +9,16 @@ interface Props {
 const APPLE_MUSIC_ICON_URL =
   'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/Apple_Music_icon.svg/500px-Apple_Music_icon.svg.png';
 
-function normalizeCoverUrl(url?: string): string | undefined {
+/** Cards are ~250 px wide: request ~600 px covers instead of 1000-1200 px originals. */
+function cardCoverUrl(url?: string): string | undefined {
   if (!url) {
     return undefined;
   }
 
-  return url.replace(/\/\d+x\d+bb(?:-\d+)?\.jpg(?:\?.*)?$/i, '/1200x1200bb.jpg');
+  return url
+    .replace(/\/\d+x\d+bb(?:-\d+)?\.jpg(?:\?.*)?$/i, '/600x600bb.jpg') // Apple
+    .replace(/\/\d+x\d+-(\d+-\d+-\d+-\d+\.jpg)$/i, '/500x500-$1') // Deezer cover_xl -> cover_big
+    .replace(/\/front-1200$/i, '/front-500'); // Cover Art Archive
 }
 
 function toAppleDesktopUrl(url?: string): string | undefined {
@@ -27,7 +31,7 @@ function toAppleDesktopUrl(url?: string): string | undefined {
 
 export function ReleaseCard({ release, isNew = false }: Props): JSX.Element {
   const [copied, setCopied] = useState(false);
-  const imageUrl = normalizeCoverUrl(release.coverUrl);
+  const imageUrl = cardCoverUrl(release.coverUrl);
   const appleArtistDesktopUrl = toAppleDesktopUrl(release.appleArtistUrl);
   const appleAlbumDesktopUrl = toAppleDesktopUrl(release.appleAlbumUrl);
   const hasAppleLinks = Boolean(appleArtistDesktopUrl || appleAlbumDesktopUrl);

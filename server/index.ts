@@ -99,6 +99,10 @@ app.get('/api/feed', (_req, res) => {
   res.json(feed.getState());
 });
 
+app.get('/api/feed/status', (_req, res) => {
+  res.json(feed.getStatus());
+});
+
 app.put('/api/feed/config', async (req, res) => {
   try {
     res.json(await feed.updateConfig((req.body ?? {}) as FeedConfigUpdate));

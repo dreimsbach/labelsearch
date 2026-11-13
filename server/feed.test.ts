@@ -210,6 +210,31 @@ describe('Feed', () => {
     expect(feed.getState().schedule.nextRunDay).toBe('2026-11-14');
   });
 
+  it('reports progress without releases in the status and merges partial results on demand', async () => {
+    let finish: () => void = () => undefined;
+    const search: typeof searchReleases = vi.fn(async (input, emit) => {
+      emit({ type: 'releases', label: input.labels[0], releases: [release('A')] });
+      emit({ type: 'labelDone', label: input.labels[0], completed: 1, totalLabels: 2 });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { releases: [release('A')], fromDate: 'x', toDate: 'y', partialFailures: [] };
+    });
+    const feed = new Feed({ schedule: berlin6, search });
+    await feed.updateConfig({ labels: [{ name: 'Dial' }, { name: 'Delsin' }] });
+
+    feed.startRun('manual');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(feed.getStatus()).toEqual({ running: true, completed: 1, total: 2, error: undefined, snapshotFinishedAt: null });
+    expect(feed.getState().run.releases.map((entry) => entry.title)).toEqual(['A']);
+
+    finish();
+    await feed.whenIdle();
+    expect(feed.getStatus().running).toBe(false);
+    expect(feed.getStatus().snapshotFinishedAt).not.toBeNull();
+    expect(feed.getState().run.releases).toEqual([]);
+  });
+
   it('keeps the previous snapshot when a run fails', async () => {
     const search = vi.fn().mockResolvedValueOnce({ releases: [release('A')], fromDate: 'x', toDate: 'y', partialFailures: [] }).mockRejectedValueOnce(new Error('boom'));
     const feed = new Feed({ schedule: berlin6, search });

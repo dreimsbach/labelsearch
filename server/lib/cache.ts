@@ -6,7 +6,8 @@ interface Entry {
 }
 
 const MAX_ENTRIES = 50_000;
-const SAVE_DEBOUNCE_MS = 5_000;
+/** Serializing the whole cache is not free; during long runs save at most every 30 s. */
+const SAVE_DEBOUNCE_MS = 30_000;
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
