@@ -78,7 +78,8 @@ Fields:
   - `days` (default): searches last `rangeValue` days including today
   - `year`: searches full calendar year `rangeValue` (e.g. `2026`)
 - `country` dropdown (default `DE`), used as iTunes storefront (fallback `US`)
-- `sources` checkboxes (at least one required):
+- range fields in one row: `Range` (value), `Unit` (Days/Year), `Country`
+- `sources` toggle chips (multi-select, at least one required; a one-line hint below explains each source):
   - `deezer` (default on)
   - `musicbrainz` (default on)
   - `discogs` (default off)
@@ -499,7 +500,7 @@ Required checks:
 ### 2026-11-13
 
 - v2 provider architecture: Deezer (`label:"…"` search, id-descending walk with early stop, exact label match) and MusicBrainz as default primary sources, queried per label in parallel; Discogs becomes an optional source using exact label ids (MusicBrainz URL relation or exact name) instead of fuzzy label+year search.
-- Replaced `sourceMode` with `sources` (checkboxes); legacy `sourceMode` still accepted by the API.
+- Replaced `sourceMode` with `sources` (toggle chips in one row with a one-line hint; range, unit and country share one row); legacy `sourceMode` still accepted by the API.
 - Added `POST /api/releases/stream` (NDJSON events, raw then enriched results with stable ids); the UI uses one streamed request instead of one request per label, and can cancel.
 - Added per-provider sliding-window rate limiters and a single retry layer honoring `Retry-After`; removed the nested Discogs retry loop.
 - Added persistent provider cache (`CACHE_FILE_PATH`, default `data/cache.json`), Docker volume `/app/data`.

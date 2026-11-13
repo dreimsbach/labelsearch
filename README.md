@@ -9,7 +9,7 @@ Modern web app to find new releases of your record labels. Primary sources: **De
   - `Days` mode (default `7`): searches the last N days including today
   - `Year` mode (e.g. `2026`): searches all releases in that year
 - Country dropdown (default `DE`, iTunes storefront with `US` fallback)
-- Source checkboxes:
+- Source toggle chips (multi-select, one row):
   - `Deezer` (default on): fast, best coverage for new digital releases
   - `MusicBrainz` (default on): curated, exact label IDs
   - `Discogs` (default off): for vinyl-only labels; slow and lags for brand-new releases. Optional token input appears when selected.
@@ -165,7 +165,7 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 ### 2026-11-13
 
 - Reworked search for reliability and speed: Deezer + MusicBrainz are the default sources and run in parallel per label; Discogs is optional and uses exact label ids instead of fuzzy label search.
-- Source dropdown replaced by source checkboxes (`sources` in the API; `sourceMode` still accepted).
+- Source dropdown replaced by source toggle chips (`sources` in the API; `sourceMode` still accepted).
 - New streamed endpoint `POST /api/releases/stream`; the UI sends one request, renders label by label and can cancel.
 - Per-provider rate limiters with `Retry-After` handling, single retry layer, persistent provider cache (`CACHE_FILE_PATH`, Docker volume `/app/data`).
 - Labels without a MusicBrainz match are kept by name instead of being dropped on import.

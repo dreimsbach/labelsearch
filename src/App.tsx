@@ -11,9 +11,9 @@ import { labelKey, loadLabels, loadResults, loadSettings, saveLabels, saveResult
 const COUNTRIES = ['DE', 'US', 'GB', 'FR', 'JP'];
 
 const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
-  { id: 'deezer', label: 'Deezer', hint: 'Fast, best coverage for new digital releases' },
-  { id: 'musicbrainz', label: 'MusicBrainz', hint: 'Curated, exact label IDs, ~1 request/s' },
-  { id: 'discogs', label: 'Discogs', hint: 'Vinyl-only labels; slow, lags for new releases' }
+  { id: 'deezer', label: 'Deezer', hint: 'fastest, best for new digital releases' },
+  { id: 'musicbrainz', label: 'MusicBrainz', hint: 'curated, exact label IDs' },
+  { id: 'discogs', label: 'Discogs', hint: 'vinyl-only labels, slow' }
 ];
 
 function formatLabelChoice(label: LabelSearchResult): string {
@@ -321,11 +321,9 @@ Subpop`}
             />
           </div>
 
-          <div className="input-row grid-row">
+          <div className="input-row grid-row grid-row-3">
             <div>
-              <label htmlFor="time-value" className="label-placeholder">
-                Value
-              </label>
+              <label htmlFor="time-value">Range</label>
               <input
                 id="time-value"
                 type="number"
@@ -340,7 +338,7 @@ Subpop`}
             </div>
 
             <div>
-              <label htmlFor="range-mode">Day/Year Switch</label>
+              <label htmlFor="range-mode">Unit</label>
               <select
                 id="range-mode"
                 aria-label="Range mode"
@@ -375,15 +373,24 @@ Subpop`}
 
           <fieldset className="source-picker">
             <legend>Sources</legend>
-            {SOURCE_OPTIONS.map((option) => (
-              <label key={option.id} className="source-option" title={option.hint}>
-                <input type="checkbox" checked={sources.includes(option.id)} onChange={() => toggleSource(option.id)} />
-                <span>
-                  {option.label}
-                  <small>{option.hint}</small>
-                </span>
-              </label>
-            ))}
+            <div className="source-chips">
+              {SOURCE_OPTIONS.map((option) => {
+                const active = sources.includes(option.id);
+                return (
+                  <label key={option.id} className={`source-chip ${active ? 'active' : ''}`} title={option.hint}>
+                    <input type="checkbox" checked={active} onChange={() => toggleSource(option.id)} />
+                    <span aria-hidden="true" className="source-chip-mark">
+                      {active ? '✓' : '+'}
+                    </span>
+                    {option.label}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="source-hint">
+              {SOURCE_OPTIONS.map((option) => `${option.label}: ${option.hint}`).join(' · ')}
+            </p>
+            {sources.length === 0 && <p className="error">Select at least one source.</p>}
           </fieldset>
 
           {sources.includes('discogs') && (
