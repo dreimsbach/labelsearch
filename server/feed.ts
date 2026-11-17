@@ -327,9 +327,15 @@ export class Feed {
     await this.persist();
   }
 
-  /** Scheduler check; runs at most once per local day after the configured time. */
+  /**
+   * Scheduler check; runs at most once per local day after the configured time. An empty label
+   * list does not use up the day, so labels added later that day still get their run.
+   */
   tick(): void {
-    if (!this.current && isRunDue(this.now(), this.options.schedule, this.state.lastScheduledDay)) {
+    if (this.current || this.state.labels.length === 0) {
+      return;
+    }
+    if (isRunDue(this.now(), this.options.schedule, this.state.lastScheduledDay)) {
       this.startRun('schedule');
     }
   }

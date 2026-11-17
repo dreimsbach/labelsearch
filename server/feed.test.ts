@@ -210,6 +210,23 @@ describe('Feed', () => {
     expect(feed.getState().schedule.nextRunDay).toBe('2026-11-14');
   });
 
+  it('does not use up the day while the label list is empty', async () => {
+    const now = new Date('2026-11-13T05:30:00Z');
+    const search = fakeSearch([[release('A')]]);
+    const feed = new Feed({ schedule: berlin6, search, now: () => now });
+
+    feed.tick();
+    await feed.whenIdle();
+    expect(feed.getState().schedule.nextRunDay).toBe('2026-11-13');
+
+    await feed.updateConfig({ labels: [{ name: 'Dial' }] });
+    feed.tick();
+    await feed.whenIdle();
+
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(feed.getState().snapshot?.trigger).toBe('schedule');
+  });
+
   it('reports progress without releases in the status and merges partial results on demand', async () => {
     let finish: () => void = () => undefined;
     const search: typeof searchReleases = vi.fn(async (input, emit) => {

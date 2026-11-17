@@ -248,7 +248,7 @@ Rules:
 - On failure the previous snapshot stays and the error is reported.
 - Settings validation: `days` must be `1..31`. Stored or migrated legacy settings with `timeMode: 'year'` are ignored (→ default 7 days), legacy `timeMode: 'days'` with `timeValue` is taken over.
 - `firstSeenAt`: per release identity (normalized artist + title) the timestamp of the run that first found it. History entries older than 400 days are removed.
-- With an empty label list a scheduled run only marks the day as done.
+- With an empty label list the scheduler does not run and does not mark the day as done; labels added later that day (after `SCHEDULE_TIME`) get their run within a minute.
 - Measured on 2026-11-13 with 66 labels: first run (cold cache) ~4.6 min, 0 failures; a repeated run is answered from the cache.
 
 ## 5. Matching, Mapping, and Dedupe Rules
@@ -539,6 +539,10 @@ Required checks:
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-11-17
+
+- Scheduler skips the run while the label list is empty instead of marking the day as done, so a feed set up after `SCHEDULE_TIME` still gets its first scheduled run that day.
 
 ### 2026-11-13 (Daily feed)
 

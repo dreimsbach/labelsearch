@@ -181,6 +181,10 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
 ## Changelog
 
+### 2026-11-17
+
+- An empty label list no longer uses up the day's scheduled refresh: if you add labels after `SCHEDULE_TIME`, the refresh still runs that day.
+
 ### 2026-11-13 (Daily feed)
 
 - The app now refreshes your label list every day in the background (`SCHEDULE_TIME`, default 06:00 Europe/Berlin) and shows the latest results immediately when you open it; `Refresh now` runs it on demand.
