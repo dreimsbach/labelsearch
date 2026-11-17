@@ -10,6 +10,11 @@ services:
       MB_USER_AGENT: "example-app/0.0.0"
       LOG_FILE_PATH: "/app/logs/app.log"
       CACHE_FILE_PATH: "/app/data/cache.json"
+      STATE_FILE_PATH: "/app/data/state.json"
+      SCHEDULE_TIME: "06:00"
+      SCHEDULE_TIMEZONE: "Europe/Berlin"
+      FEED_RETENTION_DAYS: "90"
+      # DISCOGS_TOKEN: "" # optional, only needed when the Discogs source is enabled
     volumes:
       - labelsearch-data:/app/data
 

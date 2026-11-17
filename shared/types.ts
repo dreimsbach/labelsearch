@@ -19,6 +19,7 @@ export interface SearchRequest {
   country: string;
   sources: SourceId[];
   timezone: string;
+  /** Optional per-request override; otherwise the server's DISCOGS_TOKEN is used. */
   discogsToken?: string;
 }
 
@@ -65,6 +66,8 @@ export interface Release {
   matchedByLabel: string[];
   /** Primary sources that reported this release for a label. */
   foundBy: SourceId[];
+  /** When the daily feed first saw this release (ISO timestamp); only set on feed snapshots. */
+  firstSeenAt?: string;
 }
 
 export interface SearchMeta {
@@ -94,6 +97,68 @@ export type SearchEvent =
   | { type: 'labelDone'; label: LabelRef; completed: number; totalLabels: number }
   | { type: 'done'; meta: SearchMeta }
   | { type: 'error'; message: string };
+
+/** Search settings the daily feed run uses. The feed always checks the last `days` days. */
+export interface FeedSettings {
+  days: number;
+  country: string;
+  sources: SourceId[];
+}
+
+export type RunTrigger = 'schedule' | 'manual';
+
+export interface FeedSnapshot {
+  releases: Release[];
+  meta: SearchMeta;
+  trigger: RunTrigger;
+  finishedAt: string;
+}
+
+export interface FeedRun {
+  running: boolean;
+  trigger?: RunTrigger;
+  startedAt?: string;
+  completed: number;
+  total: number;
+  /** Releases found so far by the running run (shown while no snapshot exists yet). */
+  releases: Release[];
+  failures: LabelFailure[];
+  error?: string;
+}
+
+export interface FeedSchedule {
+  enabled: boolean;
+  /** Local time `HH:MM` in `timezone`. */
+  time: string;
+  timezone: string;
+  /** Local day (`YYYY-MM-DD`) of the next scheduled run. */
+  nextRunDay?: string;
+}
+
+export interface FeedState {
+  labels: LabelRef[];
+  settings: FeedSettings;
+  snapshot: FeedSnapshot | null;
+  run: FeedRun;
+  schedule: FeedSchedule;
+  /** Releases stay in the feed this many days after their release date. */
+  retentionDays: number;
+  discogsTokenConfigured: boolean;
+}
+
+/** Small polling payload: run progress without any releases. */
+export interface FeedStatus {
+  running: boolean;
+  completed: number;
+  total: number;
+  error?: string;
+  snapshotFinishedAt: string | null;
+}
+
+export interface FeedConfigUpdate {
+  labels?: LabelRef[];
+  settings?: Partial<FeedSettings>;
+}
 
 export interface LabelSearchResult {
   id: string;

@@ -172,7 +172,8 @@ a:focus-visible {
   font-weight: 600;
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn.disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -201,12 +202,6 @@ a:focus-visible {
 
 .file-btn input {
   display: none;
-}
-
-.button-row-main {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
 }
 
 .button-row-secondary .btn {
@@ -255,10 +250,6 @@ a:focus-visible {
 
 .label-chip.name-only {
   border-style: dashed;
-}
-
-.grid-row-3 {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .source-picker {
@@ -362,9 +353,41 @@ a:focus-visible {
 .section-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: flex-start;
+  gap: 12px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 14px;
+}
+
+.section-header .btn {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.section-header p.new-count {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.label-list {
+  margin-top: 14px;
+}
+
+.label-list h2 {
+  margin: 0 0 8px;
+}
+
+.label-list .chips {
+  margin-top: 10px;
+}
+
+.failure-details {
+  margin-top: 10px;
+  color: #5d3c00;
+}
+
+.failure-details summary {
+  cursor: pointer;
 }
 
 .section-header h2 {
@@ -414,8 +437,28 @@ a:focus-visible {
 }
 
 .cover-wrap {
+  position: relative;
   aspect-ratio: 1 / 1;
   background: #e9ece4;
+}
+
+.release-card.is-new {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.new-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 .cover {
@@ -561,11 +604,7 @@ a:focus-visible {
   }
 
   .grid-row {
-    grid-template-columns: 1fr;
-  }
-
-  .grid-row-3 {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .grid-row > * {
@@ -574,10 +613,6 @@ a:focus-visible {
   }
 
   .release-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .button-row-main {
     grid-template-columns: 1fr;
   }
 }

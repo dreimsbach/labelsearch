@@ -1,38 +1,17 @@
-import { ALL_SOURCES, DEFAULT_SOURCES } from '../../shared/types';
-import type { LabelRef, Release, SourceId, TimeMode } from '../../shared/types';
+import { ALL_SOURCES } from '../../shared/types';
+import type { FeedSettings, LabelRef, SourceId } from '../../shared/types';
 
-const LABELS_KEY = 'labelsearch.labels';
-const SETTINGS_KEY = 'labelsearch.settings';
-const RESULTS_KEY = 'labelsearch.lastResults';
-
-export interface Settings {
-  timeMode: TimeMode;
-  timeValue: number;
-  country: string;
-  sources: SourceId[];
-  discogsToken: string;
-}
-
-const defaultSettings: Settings = {
-  timeMode: 'days',
-  timeValue: 7,
-  country: 'DE',
-  sources: DEFAULT_SOURCES,
-  discogsToken: ''
-};
+// Before the server-side feed, labels and settings lived in the browser. They are read once
+// to migrate them to the server; afterwards the server is the source of truth.
+const LEGACY_LABELS_KEY = 'labelsearch.labels';
+const LEGACY_SETTINGS_KEY = 'labelsearch.settings';
+const LEGACY_RESULTS_KEY = 'labelsearch.lastResults';
+const MIGRATED_KEY = 'labelsearch.migratedToServer';
+const LAST_VISIT_KEY = 'labelsearch.lastVisit';
 
 /** Stable identity for a label in the list (MBID when known, otherwise the name). */
 export function labelKey(label: LabelRef): string {
   return label.mbid ?? `name:${label.name.trim().toLowerCase()}`;
-}
-
-function toSources(value: unknown): SourceId[] {
-  if (!Array.isArray(value)) {
-    // Settings from before the source checkboxes (`sourceMode`) start with the new defaults.
-    return defaultSettings.sources;
-  }
-  const sources = value.filter((entry): entry is SourceId => ALL_SOURCES.includes(entry));
-  return sources.length > 0 ? sources : defaultSettings.sources;
 }
 
 function read<T>(key: string): T | undefined {
@@ -48,45 +27,37 @@ function write(key: string, value: unknown): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // storage full or unavailable: settings simply aren't remembered
+    // storage unavailable: nothing is remembered in this browser
   }
 }
 
-export function loadLabels(): LabelRef[] {
-  const parsed = read<LabelRef[]>(LABELS_KEY) ?? [];
-  return parsed
+/** Labels and settings from the browser that still need to move to the server, if any. */
+export function takeLegacyConfig(): { labels: LabelRef[]; settings: Partial<FeedSettings> } | null {
+  if (read<boolean>(MIGRATED_KEY)) {
+    return null;
+  }
+  const labels = (read<LabelRef[]>(LEGACY_LABELS_KEY) ?? [])
     .filter((entry) => typeof entry?.name === 'string' && entry.name.trim())
     .map((entry) => ({ name: entry.name, mbid: entry.mbid || undefined }));
+  const settings = read<Partial<FeedSettings>>(LEGACY_SETTINGS_KEY) ?? {};
+  const sources = Array.isArray(settings.sources)
+    ? settings.sources.filter((entry): entry is SourceId => ALL_SOURCES.includes(entry))
+    : undefined;
+  return labels.length > 0 ? { labels, settings: { ...settings, sources } } : null;
 }
 
-export function saveLabels(labels: LabelRef[]): void {
-  write(LABELS_KEY, labels);
-}
-
-export function loadSettings(): Settings {
-  const parsed = read<Partial<Settings> & { daysBack?: number }>(SETTINGS_KEY);
-  if (!parsed) {
-    return defaultSettings;
+export function markLegacyMigrated(): void {
+  write(MIGRATED_KEY, true);
+  try {
+    localStorage.removeItem(LEGACY_RESULTS_KEY);
+  } catch {
+    // ignore
   }
-  return {
-    timeMode: parsed.timeMode === 'year' ? 'year' : 'days',
-    timeValue: parsed.timeValue ?? parsed.daysBack ?? defaultSettings.timeValue,
-    country: parsed.country ?? defaultSettings.country,
-    sources: toSources(parsed.sources),
-    discogsToken: typeof parsed.discogsToken === 'string' ? parsed.discogsToken : ''
-  };
 }
 
-export function saveSettings(settings: Settings): void {
-  write(SETTINGS_KEY, settings);
-}
-
-export function loadResults(): Release[] {
-  const releases = read<Release[]>(RESULTS_KEY) ?? [];
-  // Results cached by older versions lack `foundBy`.
-  return releases.map((release) => ({ ...release, foundBy: release.foundBy ?? [] }));
-}
-
-export function saveResults(results: Release[]): void {
-  write(RESULTS_KEY, results);
+/** Returns the previous visit timestamp (for "new" badges) and records this visit. */
+export function takeLastVisit(): string | null {
+  const previous = read<string>(LAST_VISIT_KEY) ?? null;
+  write(LAST_VISIT_KEY, new Date().toISOString());
+  return previous;
 }

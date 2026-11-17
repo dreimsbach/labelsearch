@@ -62,10 +62,15 @@ function mbJson<T>(url: URL): Promise<T> {
   });
 }
 
+/** Escape Lucene syntax so names like `o*rs` or `100% Silk` are searched literally. */
+export function escapeLucene(value: string): string {
+  return value.replace(/([+\-!(){}[\]^"~*?:\\/]|&&|\|\|)/g, '\\$1');
+}
+
 export async function searchLabels(query: string, limit = 10): Promise<LabelSearchResult[]> {
   return cached(`mb:label-search:${limit}:${query.toLowerCase()}`, DAY, async () => {
     const url = new URL(`${BASE_URL}/label/`);
-    url.searchParams.set('query', query);
+    url.searchParams.set('query', escapeLucene(query));
     url.searchParams.set('limit', String(limit));
     const payload = await mbJson<MbLabelResponse>(url);
     return (payload.labels ?? []).map((entry) => ({

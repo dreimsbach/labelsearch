@@ -1,5 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { readJsonFile, writeJsonFile } from './json-file.js';
 
 interface Entry {
   value: unknown;
@@ -7,7 +6,8 @@ interface Entry {
 }
 
 const MAX_ENTRIES = 50_000;
-const SAVE_DEBOUNCE_MS = 5_000;
+/** Serializing the whole cache is not free; during long runs save at most every 30 s. */
+const SAVE_DEBOUNCE_MS = 30_000;
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -92,19 +92,15 @@ export function clearCache(): void {
 /** Enable file persistence (JSON). Without this call the cache is memory-only (tests). */
 export async function initCachePersistence(filePath: string): Promise<number> {
   persistPath = filePath;
-  try {
-    const raw = await readFile(filePath, 'utf8');
-    const data = JSON.parse(raw) as Record<string, Entry>;
-    const now = Date.now();
-    for (const [key, entry] of Object.entries(data)) {
-      if (entry && entry.expiresAt > now) {
-        entries.set(key, entry);
-      }
+  // missing or corrupt cache file: start empty
+  const data = (await readJsonFile<Record<string, Entry>>(filePath)) ?? {};
+  const now = Date.now();
+  for (const [key, entry] of Object.entries(data)) {
+    if (entry && entry.expiresAt > now) {
+      entries.set(key, entry);
     }
-    evictOverflow();
-  } catch {
-    // missing or corrupt cache file: start empty
   }
+  evictOverflow();
   return entries.size;
 }
 
@@ -119,8 +115,5 @@ export async function saveCache(): Promise<void> {
       data[key] = entry;
     }
   }
-  const tmp = `${persistPath}.tmp`;
-  await mkdir(path.dirname(persistPath), { recursive: true });
-  await writeFile(tmp, JSON.stringify(data));
-  await rename(tmp, persistPath);
+  await writeJsonFile(persistPath, data);
 }
