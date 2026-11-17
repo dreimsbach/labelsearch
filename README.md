@@ -181,6 +181,10 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
 ## Changelog
 
+### 2026-11-17 (Release v0.4.0)
+
+- Release `v0.4.0` (package version `0.4.0`) containing the daily feed below.
+
 ### 2026-11-17
 
 - An empty label list no longer uses up the day's scheduled refresh: if you add labels after `SCHEDULE_TIME`, the refresh still runs that day.

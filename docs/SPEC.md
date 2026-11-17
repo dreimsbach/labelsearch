@@ -540,6 +540,10 @@ Required checks:
 
 ## 11. Changelog
 
+### 2026-11-17 (Release v0.4.0)
+
+- Release `v0.4.0` (package version `0.4.0`) containing the daily feed below.
+
 ### 2026-11-17
 
 - Scheduler skips the run while the label list is empty instead of marking the day as done, so a feed set up after `SCHEDULE_TIME` still gets its first scheduled run that day.
