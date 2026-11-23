@@ -181,6 +181,10 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
 ## Changelog
 
+### 2026-11-23 (Release v0.5.0)
+
+- Release `v0.5.0` (package version `0.5.0`) containing the special search and the Deezer short-name label search below.
+
 ### 2026-11-23
 
 - New `Special search` panel for one-off searches outside the daily feed: own label field, range (last 1–365 days or a whole year) and sources. It changes neither the feed, the label list nor the daily settings; its form is remembered per browser. `Add label to feed` adds the searched label to the list.

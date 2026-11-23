@@ -550,6 +550,10 @@ Required checks:
 
 ## 11. Changelog
 
+### 2026-11-23 (Release v0.5.0)
+
+- Release `v0.5.0` (package version `0.5.0`) containing the special search and the Deezer short-name label search below.
+
 ### 2026-11-23
 
 - Special search (3.4): separate panel with its own label, range (1–365 days or a whole year) and sources; never changes the feed, label list or settings; form kept in `localStorage` (`labelsearch.specialSearch`); `Add label to feed` in the result header.
