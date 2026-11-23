@@ -146,7 +146,7 @@ Rejected alternatives:
 - Spotify Web API: since Feb 2026 dev-mode apps need Premium, search returns max 10 results and the album `label` field was removed.
 - Apple Music API (`record-labels/{id}?views=latest-releases`): best fit, but requires a paid Apple Developer membership. Can be added as another source later.
 
-Each selected source runs per label in parallel (`Promise.allSettled`); one failing source never drops results of the others.
+Each selected source runs per label in parallel (`Promise.allSettled`); one failing source never drops results of the others. A source that rejects with `PartialResultError` (some lookups failed) contributes the results it carries and is still reported as a per-source failure.
 
 ## 4.2 MusicBrainz
 
@@ -183,6 +183,7 @@ Algorithm per label:
 3. Fetch `/album/{id}` in batches of 10 and keep albums whose `label` matches exactly (see 5.1) and whose `release_date` lies in the window.
 4. Stop after 10 consecutive matching albums released more than 180 days before `fromDate`. The lookback is long because pre-orders are ingested months ahead (e.g. Fujita, ingested ~August for a November release).
 5. Hard cap: 200 detail lookups in `days` mode, 400 in `year` mode (old years cannot use the early stop efficiently).
+6. Album lookups that still fail after the `fetchJson` retries (4.7) are tried once more after the walk. If some still fail, the albums found so far are kept and the label gets a Deezer partial failure `<n> album lookup(s) failed, results may be incomplete (<last error>)`. A failed lookup is never treated as "no release".
 
 Operational rules:
 
@@ -537,7 +538,7 @@ Required checks:
 - Typecheck: shared and server/frontend TS consistency
 - Unit tests:
   - label matching (exact after normalization, fuzzy noise rejected), label search terms (short name without generic suffixes)
-  - Deezer discovery: window filter, pre-order ingests, early stop, cache reuse, short-name search when the full name finds nothing
+  - Deezer discovery: window filter, pre-order ingests, early stop, cache reuse, short-name search when the full name finds nothing, retry of failed album lookups, partial failure with kept results when lookups keep failing
   - search orchestration: cross-source merge, streaming raw → enriched with stable ids, per-source failures, name-only labels, multi-label merge, Discogs year/day filtering and 429 hint
   - rate limiter spacing, `fetchJson` retry/no-retry/redaction
   - dedupe (suffixes, date drift, featured artists, reissues)
@@ -549,6 +550,10 @@ Required checks:
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-11-23 (Deezer lookup failures)
+
+- Failed Deezer album lookups are no longer silently treated as "no release": they are retried once after the walk, and lookups that keep failing are reported as a Deezer partial failure while the albums found so far are kept (4.3 step 6, `PartialResultError`).
 
 ### 2026-11-23 (Release v0.5.0)
 

@@ -1,6 +1,7 @@
 import { mergeReleases, uniqueLinks } from '../shared/merge.js';
 import type { LabelFailure, LabelRef, Release, SearchEvent, SearchMeta, SearchRequest, SourceId } from '../shared/types.js';
 import { computeDateRange } from './lib/date.js';
+import { PartialResultError } from './lib/errors.js';
 import { HttpError } from './lib/http.js';
 import { normalizeLabelName } from './lib/labels.js';
 import { mapPool } from './lib/limiter.js';
@@ -147,8 +148,16 @@ async function resolveMbid(label: LabelRef): Promise<string | undefined> {
 }
 
 async function fromDeezer(label: LabelRef, ctx: SearchContext): Promise<Release[]> {
-  const albums = await findLabelAlbums(label.name, ctx.fromDate, ctx.toDate, ctx.mode);
-  return albums.map((album) => mapDeezerAlbum(album, label));
+  try {
+    const albums = await findLabelAlbums(label.name, ctx.fromDate, ctx.toDate, ctx.mode);
+    return albums.map((album) => mapDeezerAlbum(album, label));
+  } catch (error) {
+    if (error instanceof PartialResultError) {
+      const albums = error.results as DeezerAlbum[];
+      throw new PartialResultError(error.message, albums.map((album) => mapDeezerAlbum(album, label)));
+    }
+    throw error;
+  }
 }
 
 async function fromMusicBrainz(label: LabelRef, ctx: SearchContext): Promise<Release[]> {
@@ -255,6 +264,10 @@ async function processLabel(label: LabelRef, sources: SourceId[], ctx: SearchCon
     if (result.status === 'fulfilled') {
       found.push(...result.value);
       return;
+    }
+    // Some lookups failed: keep what the source did find, and still report the failure.
+    if (result.reason instanceof PartialResultError) {
+      found.push(...(result.reason.results as Release[]));
     }
     const message = friendlyProviderError(source, result.reason);
     void logWarn('Label source failed', { label: label.name, source, message });

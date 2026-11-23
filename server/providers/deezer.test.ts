@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../lib/http.js', () => ({ fetchJson: vi.fn() }));
 
 import { clearCache } from '../lib/cache.js';
+import { PartialResultError } from '../lib/errors.js';
 import { fetchJson } from '../lib/http.js';
-import { findLabelAlbums } from './deezer.js';
+import { findLabelAlbums, type DeezerAlbum } from './deezer.js';
 
 interface FakeAlbum {
   id: number;
@@ -84,6 +85,41 @@ describe('findLabelAlbums', () => {
 
     const found = await findLabelAlbums('Smallville Records', '2026-11-17', '2026-11-23', 'days');
     expect(found.map((album) => album.title)).toEqual(['Tumbling Cycles']);
+  });
+
+  it('retries a failed album lookup once after the walk', async () => {
+    serve([{ id: 1127033671, label: 'Smallville', release_date: '2026-11-20', title: 'Tumbling Cycles' }]);
+    const base = vi.mocked(fetchJson).getMockImplementation()!;
+    let failures = 1;
+    vi.mocked(fetchJson).mockImplementation(async (url: string, ...rest) => {
+      if (url.endsWith('/album/1127033671') && failures > 0) {
+        failures -= 1;
+        throw new Error('timeout');
+      }
+      return base(url, ...rest);
+    });
+
+    const found = await findLabelAlbums('Smallville', '2026-11-17', '2026-11-23', 'days');
+    expect(found.map((album) => album.title)).toEqual(['Tumbling Cycles']);
+  });
+
+  it('reports album lookups that keep failing instead of dropping them silently', async () => {
+    serve([
+      { id: 2000, label: 'Smallville', release_date: '2026-11-20', title: 'Tumbling Cycles' },
+      { id: 1000, label: 'Smallville', release_date: '2026-11-18', title: 'Other Record' }
+    ]);
+    const base = vi.mocked(fetchJson).getMockImplementation()!;
+    vi.mocked(fetchJson).mockImplementation(async (url: string, ...rest) => {
+      if (url.endsWith('/album/2000')) {
+        throw new Error('timeout');
+      }
+      return base(url, ...rest);
+    });
+
+    const error = await findLabelAlbums('Smallville', '2026-11-17', '2026-11-23', 'days').catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(PartialResultError);
+    expect((error as PartialResultError<DeezerAlbum>).message).toContain('1 album lookup(s) failed');
+    expect((error as PartialResultError<DeezerAlbum>).results.map((album) => album.title)).toEqual(['Other Record']);
   });
 
   it('serves repeated searches from cache', async () => {
