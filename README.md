@@ -13,7 +13,7 @@ It is a single-user app without its own login: run it behind a reverse proxy wit
 - Label list and settings stored on the server (`data/state.json`), so every browser/device sees the same feed
 - Label import from file: `Add from file` (extend the list) or `Replace from file` (swap the list), plus export, single add/remove and `Clear all`
 - Label management with MusicBrainz MBID resolution (exact name matches only); labels without a match are kept by name (dashed chip) and still searched on Deezer/Discogs
-- `Search directly`: one-off search for a single label without changing the feed
+- `Special search`: its own panel for one-off searches of any label (last 1–365 days or a whole year, own source chips). It never changes the feed, the label list or the daily settings; a running refresh keeps going. The label is searched by the name you type, and `Add label to feed` puts it on the list if you want to keep it.
 - `Check last days` field (1–31, default 7)
 - Country dropdown (default `DE`, iTunes storefront with `US` fallback)
 - Source toggle chips (multi-select, one row):
@@ -33,7 +33,7 @@ It is a single-user app without its own login: run it behind a reverse proxy wit
 
 Per label, all selected sources run in parallel:
 
-- **Deezer**: `label:"<name>"` album search, walked newest-ingested first (Deezer ids grow over time). Album details are checked for an exact label match (after removing words like `Records`/`Ltd.`) and the date window. The walk stops after 10 albums released more than 180 days before the window, which is usually 20-40 requests per label.
+- **Deezer**: `label:"<name>"` album search (for names ending in `Records`, `Music`, `Ltd.` etc. also with the short name, because Deezer's phrase search for `Smallville Records` finds nothing when the albums are labelled `Smallville`), walked newest-ingested first (Deezer ids grow over time). Album details are checked for an exact label match (after removing words like `Records`/`Ltd.`) and the date window. The walk stops after 10 albums released more than 180 days before the window, which is usually 20-40 requests per label.
 - **MusicBrainz**: `laid:<MBID> AND date:[from TO to]`, only exact dates in `Days` mode.
 - **Discogs**: exact label id (via MusicBrainz URL relation or exact name), label release listing filtered by year, then release details for the exact date.
 
@@ -164,10 +164,10 @@ Required GitHub repository secrets:
 - `PUT /api/feed/config` (`{ labels?, settings? }`)
 - `POST /api/feed/run` (start a refresh now)
 - `GET /api/feed/status` (run progress only, used for polling)
-- `POST /api/releases/stream` (direct search, NDJSON event stream)
-- `POST /api/releases/search` (direct search, single JSON response)
+- `POST /api/releases/stream` (special search, NDJSON event stream; does not touch the feed)
+- `POST /api/releases/search` (special search, single JSON response)
 
-Direct-search request body: `{ labels: [{ name, mbid? }], timeMode, timeValue, country, sources: ["deezer","musicbrainz","discogs"], timezone, discogsToken? }`. The legacy `sourceMode` field is still accepted.
+Special-search request body: `{ labels: [{ name, mbid? }], timeMode, timeValue, country, sources: ["deezer","musicbrainz","discogs"], timezone, discogsToken? }`. The legacy `sourceMode` field is still accepted.
 
 Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
@@ -176,10 +176,17 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 - Discogs tokens are sent as `Authorization` header and redacted from errors/logs.
 - If enrichment (iTunes, Cover Art Archive) fails, releases are still shown.
 - Cover priority: Deezer -> Discogs -> Cover Art Archive -> iTunes. Apple artwork URLs are normalized to a high-resolution variant.
-- Year searches (API only, `timeMode: "year"`) for old years cannot use the Deezer early stop and are capped at 400 album lookups per label.
+- Year searches (special search `Whole year`, or API `timeMode: "year"`) for old years cannot use the Deezer early stop and are capped at 400 album lookups per label.
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-11-23
+
+- New `Special search` panel for one-off searches outside the daily feed: own label field, range (last 1–365 days or a whole year) and sources. It changes neither the feed, the label list nor the daily settings; its form is remembered per browser. `Add label to feed` adds the searched label to the list.
+- The old `Search directly` button is gone. It took the first MusicBrainz hit (`Smallville` → `Smallville Records`) and then missed releases Deezer lists under the short name.
+- Deezer also searches the label name without generic suffixes (`Records`, `Music`, `Ltd.` …). Fixes the missed release Billus – Tumbling Cycles (Deezer label `Smallville`, 2026-11-20) for the feed label `Smallville Records`, in the daily refresh and in one-off searches.
+- The left column is no longer sticky on desktop (special search and feed controls together are taller than the screen).
 
 ### 2026-11-17 (Release v0.4.0)
 

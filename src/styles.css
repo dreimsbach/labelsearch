@@ -65,11 +65,36 @@ select {
   box-shadow: var(--shadow);
 }
 
+/* Not sticky: special search and feed controls together are taller than the viewport. */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-self: start;
+  min-width: 0;
+}
+
 .controls {
   padding: 18px;
-  position: sticky;
-  top: 18px;
-  align-self: start;
+}
+
+.controls > h2 {
+  margin: 0 0 6px;
+}
+
+.panel-hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.special-search {
+  border-color: var(--primary);
+}
+
+.special-search .button-row {
+  margin-bottom: 0;
 }
 
 .instructions-collapsible {
@@ -364,6 +389,13 @@ a:focus-visible {
   margin-bottom: 10px;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .section-header p.new-count {
   color: var(--primary);
   font-weight: 600;
@@ -581,10 +613,6 @@ a:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .controls {
-    position: static;
-  }
-
   .grid-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -597,10 +625,6 @@ a:focus-visible {
 @media (max-width: 640px) {
   .page {
     padding: 14px;
-  }
-
-  .controls {
-    position: static;
   }
 
   .grid-row {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mergeReleases } from '../../shared/merge.js';
 import type { Release } from '../../shared/types.js';
 import { HttpError, fetchJson, redactUrl } from './http.js';
-import { labelMatches, normalizeLabelName } from './labels.js';
+import { labelMatches, labelSearchTerms, normalizeLabelName } from './labels.js';
 import { RateLimiter } from './limiter.js';
 
 describe('labelMatches', () => {
@@ -20,6 +20,21 @@ describe('labelMatches', () => {
     expect(labelMatches('Latency', 'Low Latency FM')).toBe(false);
     expect(labelMatches('Latency', 'Neon Latency Records')).toBe(false);
     expect(labelMatches('Latency', undefined)).toBe(false);
+  });
+});
+
+describe('labelSearchTerms', () => {
+  it('adds the name without generic suffix words', () => {
+    expect(labelSearchTerms('Smallville Records')).toEqual(['Smallville Records', 'Smallville']);
+    expect(labelSearchTerms('Erased Tapes Records Ltd.')).toEqual(['Erased Tapes Records Ltd.', 'Erased Tapes']);
+    expect(labelSearchTerms('Morr Music')).toEqual(['Morr Music', 'Morr']);
+  });
+
+  it('keeps names without suffix, generic-only names and too short cores as they are', () => {
+    expect(labelSearchTerms('Smallville')).toEqual(['Smallville']);
+    expect(labelSearchTerms('Music')).toEqual(['Music']);
+    expect(labelSearchTerms('XL Recordings')).toEqual(['XL Recordings']);
+    expect(labelSearchTerms('The Leaf Label')).toEqual(['The Leaf Label', 'The Leaf']);
   });
 });
 

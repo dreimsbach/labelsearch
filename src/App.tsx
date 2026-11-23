@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { mergeReleases } from '../shared/merge';
-import type { FeedSettings, FeedState, LabelRef, LabelSearchResult, Release, SourceId } from '../shared/types';
+import type { FeedSettings, FeedState, LabelRef, LabelSearchResult, Release, SourceId, TimeMode } from '../shared/types';
 import { LabelChip } from './components/LabelChip';
 import { ReleaseCard } from './components/ReleaseCard';
 import { ReleaseSkeleton } from './components/ReleaseSkeleton';
 import { getFeed, getFeedStatus, searchLabels, startFeedRun, streamReleases, updateFeedConfig } from './lib/api';
 import { parseLabelText } from './lib/csv';
-import { labelKey, markLegacyMigrated, takeLastVisit, takeLegacyConfig } from './lib/storage';
+import {
+  labelKey,
+  markLegacyMigrated,
+  readSpecialSearchForm,
+  saveSpecialSearchForm,
+  takeLastVisit,
+  takeLegacyConfig,
+  type SpecialSearchForm
+} from './lib/storage';
 
 const COUNTRIES = ['DE', 'US', 'GB', 'FR', 'JP'];
 const POLL_RUNNING_MS = 3_000;
@@ -15,6 +23,8 @@ const POLL_IDLE_MS = 60_000;
 const PARTIAL_RELOAD_MS = 15_000;
 const SETTINGS_SAVE_DELAY_MS = 500;
 const MAX_DAYS = 31;
+/** The special search is not part of the daily feed, so it may look further back. */
+const SPECIAL_MAX_DAYS = 365;
 
 const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
   { id: 'deezer', label: 'Deezer', hint: 'fastest, best for new digital releases' },
@@ -25,14 +35,51 @@ const SOURCE_OPTIONS: Array<{ id: SourceId; label: string; hint: string }> = [
 const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
+/** A one-off special search; its results are only shown, never written to the feed. */
 interface AdhocSearch {
   label: LabelRef;
+  range: string;
   releases: Release[];
   failures: string[];
   loading: boolean;
 }
 
 type ImportMode = 'add' | 'replace';
+
+/** Validated range of the special search form, or an error message. */
+function specialSearchRange(form: SpecialSearchForm): { timeMode: TimeMode; timeValue: number; text: string } | string {
+  if (form.mode === 'year') {
+    const year = Number(form.year);
+    return Number.isInteger(year) && year >= 1900 && year <= 2100 ? { timeMode: 'year', timeValue: year, text: String(year) } : 'Enter a year between 1900 and 2100';
+  }
+  const days = Number(form.days);
+  return Number.isInteger(days) && days >= 1 && days <= SPECIAL_MAX_DAYS
+    ? { timeMode: 'days', timeValue: days, text: days === 1 ? 'today' : `last ${days} days` }
+    : `Enter 1 to ${SPECIAL_MAX_DAYS} days`;
+}
+
+function SourceChips({ selected, onToggle }: { selected: SourceId[]; onToggle: (source: SourceId) => void }): JSX.Element {
+  return (
+    <div className="source-chips">
+      {SOURCE_OPTIONS.map((option) => {
+        const active = selected.includes(option.id);
+        return (
+          <label key={option.id} className={`source-chip ${active ? 'active' : ''}`} title={option.hint}>
+            <input type="checkbox" checked={active} onChange={() => onToggle(option.id)} />
+            <span aria-hidden="true" className="source-chip-mark">
+              {active ? '✓' : '+'}
+            </span>
+            {option.label}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function toggleIn(sources: SourceId[], source: SourceId): SourceId[] {
+  return sources.includes(source) ? sources.filter((entry) => entry !== source) : [...sources, source];
+}
 
 function formatLabelChoice(label: LabelSearchResult): string {
   const info = [label.country, label.disambiguation].filter(Boolean).join(' · ');
@@ -70,6 +117,7 @@ export function App(): JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [previousVisit] = useState<string | null>(() => takeLastVisit());
   const [adhoc, setAdhoc] = useState<AdhocSearch | null>(null);
+  const [specialForm, setSpecialForm] = useState<SpecialSearchForm>(() => readSpecialSearchForm());
 
   const [labelQuery, setLabelQuery] = useState('');
   const [labelSearchResults, setLabelSearchResults] = useState<LabelSearchResult[]>([]);
@@ -174,10 +222,18 @@ export function App(): JSX.Element {
     if (!settings) {
       return;
     }
-    const sources = settings.sources.includes(source) ? settings.sources.filter((entry) => entry !== source) : [...settings.sources, source];
+    const sources = toggleIn(settings.sources, source);
     if (sources.length > 0) {
       changeSettings({ sources });
     }
+  }
+
+  function changeSpecialForm(patch: Partial<SpecialSearchForm>): void {
+    setSpecialForm((prev) => {
+      const next = { ...prev, ...patch };
+      saveSpecialSearchForm(next);
+      return next;
+    });
   }
 
   async function refreshNow(): Promise<void> {
@@ -282,25 +338,38 @@ export function App(): JSX.Element {
     }
   }
 
-  async function runAdhocSearch(label: LabelRef): Promise<void> {
-    if (!settings) {
+  /**
+   * One-off search with its own label, range and sources. It never touches the feed: no labels,
+   * settings or snapshot are changed, and a running daily refresh keeps going.
+   */
+  async function runSpecialSearch(): Promise<void> {
+    const name = specialForm.label.trim();
+    const range = specialSearchRange(specialForm);
+    if (!name) {
       return;
     }
+    if (typeof range === 'string') {
+      setError(range);
+      return;
+    }
+    // Searched by the typed name: the server finds the MusicBrainz label by normalized name
+    // ("Smallville" → "Smallville Records"), and Deezer keeps the name as typed.
+    const label: LabelRef = { name };
     adhocAbort.current?.abort();
     const controller = new AbortController();
     adhocAbort.current = controller;
     setError(null);
-    setAdhoc({ label, releases: [], failures: [], loading: true });
+    setAdhoc({ label, range: range.text, releases: [], failures: [], loading: true });
 
     const byId = new Map<string, Release>();
     try {
       await streamReleases(
         {
           labels: [label],
-          timeMode: 'days',
-          timeValue: settings.days,
-          country: settings.country,
-          sources: settings.sources,
+          timeMode: range.timeMode,
+          timeValue: range.timeValue,
+          country: settings?.country ?? 'DE',
+          sources: specialForm.sources,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
         },
         (event) => {
@@ -333,25 +402,11 @@ export function App(): JSX.Element {
     setAdhoc(null);
   }
 
-  async function searchDirectly(): Promise<void> {
-    if (selectedSearchResult) {
-      await runAdhocSearch({ mbid: selectedSearchResult.id, name: selectedSearchResult.name });
-      return;
-    }
-    if (!labelQuery.trim()) {
-      return;
-    }
-    try {
-      const selected = (await searchLabels(labelQuery.trim()))[0];
-      if (!selected) {
-        // Unknown on MusicBrainz: still search Deezer/Discogs by name.
-        await runAdhocSearch({ name: labelQuery.trim() });
-        return;
-      }
-      setSelectedSearchResult(selected);
-      await runAdhocSearch({ mbid: selected.id, name: selected.name });
-    } catch (directError) {
-      setError(directError instanceof Error ? directError.message : 'Direct search failed');
+  const adhocInList = adhoc ? labels.some((entry) => entry.name.toLowerCase() === adhoc.label.name.toLowerCase()) : false;
+
+  async function addAdhocLabelToList(): Promise<void> {
+    if (adhoc && !adhocInList) {
+      await saveLabels(mergeLabelLists(labels, [await resolveLabelName(adhoc.label.name)]));
     }
   }
 
@@ -383,219 +438,290 @@ export function App(): JSX.Element {
       </header>
 
       <main className="layout">
-        <section className="panel controls" aria-label="Labels and settings">
-          <details className="instructions-collapsible" aria-label="Instructions">
-            <summary>How it works & import format</summary>
-            <ol>
-              <li>Build your label list: search and add labels, or import a file (add to or replace the list).</li>
-              <li>Pick how many recent days to check, country and sources. They are saved and used by the daily refresh.</li>
-              <li>Each refresh checks only those recent days and adds what it finds; releases stay in the list for a while, so it grows into a history.</li>
-              <li>Open the page any time to see the latest results. "New" marks releases found since your last visit.</li>
-              <li>"Search directly" runs a one-off search for a single label without changing the feed.</li>
-            </ol>
-            <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
-            <pre>
-{`#Rock Music
-Run for Cover Records
-Smallville
-Subpop`}
-            </pre>
-          </details>
+        <div className="sidebar">
+          <section className="panel controls special-search" aria-label="Special search">
+            <h2>Special search</h2>
+            <p className="panel-hint">Search any label once, also further back. Does not change your feed, label list or daily settings.</p>
 
-          <div className="input-row">
-            <label htmlFor="label-query">Label</label>
-            <input
-              id="label-query"
-              value={labelQuery}
-              onChange={(event) => {
-                setLabelQuery(event.target.value);
-                setSelectedSearchResult(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  void runLabelLookup(labelQuery);
-                }
-              }}
-              placeholder="Enter music label"
-            />
-          </div>
-
-          <div className="button-row button-row-secondary">
-            <button type="button" className="btn secondary" onClick={() => runLabelLookup(labelQuery)} disabled={!labelQuery.trim()}>
-              Find label
-            </button>
-            <button type="button" className="btn secondary" onClick={addSelectedToList} disabled={!selectedSearchResult || !loaded}>
-              Add to list
-            </button>
-            <button type="button" className="btn secondary" onClick={searchDirectly} disabled={!loaded || (!labelQuery.trim() && !selectedSearchResult)}>
-              {selectedSearchResult ? 'Search selected label' : 'Search directly'}
-            </button>
-          </div>
-
-          {labelSearchResults.length > 0 && (
-            <div className="result-list" role="listbox" aria-label="Label search results">
-              {labelSearchResults.map((entry) => (
-                <button
-                  type="button"
-                  key={entry.id}
-                  className={`search-result ${selectedSearchResult?.id === entry.id ? 'active' : ''}`}
-                  onClick={() => setSelectedSearchResult(entry)}
-                >
-                  {formatLabelChoice(entry)}
-                </button>
-              ))}
+            <div className="input-row">
+              <label htmlFor="special-label">Label</label>
+              <input
+                id="special-label"
+                value={specialForm.label}
+                onChange={(event) => changeSpecialForm({ label: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    void runSpecialSearch();
+                  }
+                }}
+                placeholder="e.g. Smallville"
+              />
             </div>
-          )}
 
-          {settings && (
-            <>
-              <div className="input-row grid-row">
-                <div>
-                  <label htmlFor="days">Check last days</label>
+            <div className="input-row grid-row">
+              <div>
+                <label htmlFor="special-mode">Range</label>
+                <select id="special-mode" value={specialForm.mode} onChange={(event) => changeSpecialForm({ mode: event.target.value as TimeMode })}>
+                  <option value="days">Last days</option>
+                  <option value="year">Whole year</option>
+                </select>
+              </div>
+              <div>
+                {specialForm.mode === 'days' ? (
+                  <>
+                    <label htmlFor="special-value">Days (1–{SPECIAL_MAX_DAYS})</label>
+                    <input
+                      id="special-value"
+                      type="number"
+                      min={1}
+                      max={SPECIAL_MAX_DAYS}
+                      value={specialForm.days}
+                      onChange={(event) => changeSpecialForm({ days: event.target.value })}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="special-value">Year</label>
+                    <input
+                      id="special-value"
+                      type="number"
+                      min={1900}
+                      max={2100}
+                      value={specialForm.year}
+                      onChange={(event) => changeSpecialForm({ year: event.target.value })}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            <fieldset className="source-picker">
+              <legend>Sources</legend>
+              <SourceChips
+                selected={specialForm.sources}
+                onToggle={(source) => {
+                  const sources = toggleIn(specialForm.sources, source);
+                  if (sources.length > 0) {
+                    changeSpecialForm({ sources });
+                  }
+                }}
+              />
+            </fieldset>
+
+            <div className="button-row">
+              <button type="button" className="btn primary" onClick={runSpecialSearch} disabled={!specialForm.label.trim()}>
+                {adhoc?.loading ? 'Searching…' : 'Search'}
+              </button>
+            </div>
+          </section>
+
+          <section className="panel controls" aria-label="Labels and settings">
+            <h2>Daily feed</h2>
+            <details className="instructions-collapsible" aria-label="Instructions">
+              <summary>How it works & import format</summary>
+              <ol>
+                <li>Build your label list: search and add labels, or import a file (add to or replace the list).</li>
+                <li>Pick how many recent days to check, country and sources. They are saved and used by the daily refresh.</li>
+                <li>Each refresh checks only those recent days and adds what it finds; releases stay in the list for a while, so it grows into a history.</li>
+                <li>Open the page any time to see the latest results. "New" marks releases found since your last visit.</li>
+                <li>"Special search" runs a one-off search for any label (up to a year back) without changing the feed, the list or these settings.</li>
+              </ol>
+              <p>Use one label per line. Empty lines are ignored. Lines starting with <code>#</code> are comments.</p>
+              <pre>
+  {`#Rock Music
+  Run for Cover Records
+  Smallville
+  Subpop`}
+              </pre>
+            </details>
+
+            <div className="input-row">
+              <label htmlFor="label-query">Label</label>
+              <input
+                id="label-query"
+                value={labelQuery}
+                onChange={(event) => {
+                  setLabelQuery(event.target.value);
+                  setSelectedSearchResult(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    void runLabelLookup(labelQuery);
+                  }
+                }}
+                placeholder="Enter music label"
+              />
+            </div>
+
+            <div className="button-row button-row-secondary">
+              <button type="button" className="btn secondary" onClick={() => runLabelLookup(labelQuery)} disabled={!labelQuery.trim()}>
+                Find label
+              </button>
+              <button type="button" className="btn secondary" onClick={addSelectedToList} disabled={!selectedSearchResult || !loaded}>
+                Add to list
+              </button>
+            </div>
+
+            {labelSearchResults.length > 0 && (
+              <div className="result-list" role="listbox" aria-label="Label search results">
+                {labelSearchResults.map((entry) => (
+                  <button
+                    type="button"
+                    key={entry.id}
+                    className={`search-result ${selectedSearchResult?.id === entry.id ? 'active' : ''}`}
+                    onClick={() => setSelectedSearchResult(entry)}
+                  >
+                    {formatLabelChoice(entry)}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {settings && (
+              <>
+                <div className="input-row grid-row">
+                  <div>
+                    <label htmlFor="days">Check last days</label>
+                    <input
+                      id="days"
+                      type="number"
+                      min={1}
+                      max={MAX_DAYS}
+                      value={settings.days}
+                      onChange={(event) => {
+                        const next = Math.trunc(Number(event.target.value));
+                        if (Number.isFinite(next) && next >= 1 && next <= MAX_DAYS) {
+                          changeSettings({ days: next });
+                        }
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="country">Country</label>
+                    <select id="country" value={settings.country} onChange={(event) => changeSettings({ country: event.target.value })}>
+                      {COUNTRIES.map((entry) => (
+                        <option key={entry} value={entry}>
+                          {entry}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <fieldset className="source-picker">
+                  <legend>Sources</legend>
+                  <SourceChips selected={settings.sources} onToggle={toggleSource} />
+                  <p className="source-hint">
+                    {SOURCE_OPTIONS.map((option) => `${option.label}: ${option.hint}`).join(' · ')}
+                    {settings.sources.includes('discogs') &&
+                      !feed?.discogsTokenConfigured &&
+                      '. Discogs runs without a token; set DISCOGS_TOKEN on the server for higher limits.'}
+                  </p>
+                </fieldset>
+              </>
+            )}
+
+            <div className="label-list">
+              <h2>Label list ({labels.length})</h2>
+              <div className="button-row button-row-secondary">
+                <label className={`btn secondary file-btn ${importing || !loaded ? 'disabled' : ''}`}>
+                  Add from file
                   <input
-                    id="days"
-                    type="number"
-                    min={1}
-                    max={MAX_DAYS}
-                    value={settings.days}
+                    type="file"
+                    accept=".txt,.csv,text/plain,text/csv"
+                    disabled={importing || !loaded}
                     onChange={(event) => {
-                      const next = Math.trunc(Number(event.target.value));
-                      if (Number.isFinite(next) && next >= 1 && next <= MAX_DAYS) {
-                        changeSettings({ days: next });
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        void importFile(file, 'add');
+                        event.target.value = '';
                       }
                     }}
                   />
-                </div>
-
-                <div>
-                  <label htmlFor="country">Country</label>
-                  <select id="country" value={settings.country} onChange={(event) => changeSettings({ country: event.target.value })}>
-                    {COUNTRIES.map((entry) => (
-                      <option key={entry} value={entry}>
-                        {entry}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                </label>
+                <label className={`btn secondary file-btn ${importing || !loaded ? 'disabled' : ''}`}>
+                  Replace from file
+                  <input
+                    type="file"
+                    accept=".txt,.csv,text/plain,text/csv"
+                    disabled={importing || !loaded}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        void importFile(file, 'replace');
+                        event.target.value = '';
+                      }
+                    }}
+                  />
+                </label>
+                <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
+                  Export
+                </button>
+                <button className="btn danger subtle" type="button" onClick={clearLabels} disabled={importing || labels.length === 0}>
+                  Clear all
+                </button>
               </div>
-
-              <fieldset className="source-picker">
-                <legend>Sources</legend>
-                <div className="source-chips">
-                  {SOURCE_OPTIONS.map((option) => {
-                    const active = settings.sources.includes(option.id);
-                    return (
-                      <label key={option.id} className={`source-chip ${active ? 'active' : ''}`} title={option.hint}>
-                        <input type="checkbox" checked={active} onChange={() => toggleSource(option.id)} />
-                        <span aria-hidden="true" className="source-chip-mark">
-                          {active ? '✓' : '+'}
-                        </span>
-                        {option.label}
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="source-hint">
-                  {SOURCE_OPTIONS.map((option) => `${option.label}: ${option.hint}`).join(' · ')}
-                  {settings.sources.includes('discogs') &&
-                    !feed?.discogsTokenConfigured &&
-                    '. Discogs runs without a token; set DISCOGS_TOKEN on the server for higher limits.'}
+              {importing && (
+                <p className="progress">
+                  Resolving labels on MusicBrainz: {importProgress.current} / {importProgress.total}
                 </p>
-              </fieldset>
-            </>
-          )}
-
-          <div className="label-list">
-            <h2>Label list ({labels.length})</h2>
-            <div className="button-row button-row-secondary">
-              <label className={`btn secondary file-btn ${importing || !loaded ? 'disabled' : ''}`}>
-                Add from file
-                <input
-                  type="file"
-                  accept=".txt,.csv,text/plain,text/csv"
-                  disabled={importing || !loaded}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) {
-                      void importFile(file, 'add');
-                      event.target.value = '';
-                    }
-                  }}
-                />
-              </label>
-              <label className={`btn secondary file-btn ${importing || !loaded ? 'disabled' : ''}`}>
-                Replace from file
-                <input
-                  type="file"
-                  accept=".txt,.csv,text/plain,text/csv"
-                  disabled={importing || !loaded}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) {
-                      void importFile(file, 'replace');
-                      event.target.value = '';
-                    }
-                  }}
-                />
-              </label>
-              <button className="btn secondary" type="button" onClick={exportLabelsList} disabled={labels.length === 0}>
-                Export
-              </button>
-              <button className="btn danger subtle" type="button" onClick={clearLabels} disabled={importing || labels.length === 0}>
-                Clear all
-              </button>
+              )}
+              <div className="chips">
+                {labels.map((label) => (
+                  <LabelChip
+                    key={labelKey(label)}
+                    label={label}
+                    onRemove={(removed) => void saveLabels(labels.filter((entry) => labelKey(entry) !== labelKey(removed)))}
+                  />
+                ))}
+              </div>
             </div>
-            {importing && (
-              <p className="progress">
-                Resolving labels on MusicBrainz: {importProgress.current} / {importProgress.total}
-              </p>
-            )}
-            <div className="chips">
-              {labels.map((label) => (
-                <LabelChip
-                  key={labelKey(label)}
-                  label={label}
-                  onRemove={(removed) => void saveLabels(labels.filter((entry) => labelKey(entry) !== labelKey(removed)))}
-                />
-              ))}
-            </div>
-          </div>
 
-          {error && <p className="error">{error}</p>}
-          {notices.length > 0 && (
-            <ul className="warning-list">
-              {notices.map((notice) => (
-                <li key={notice}>{notice}</li>
-              ))}
-            </ul>
-          )}
-          {!adhoc && feedFailures.length > 0 && (
-            <details className="failure-details">
-              <summary>{feedFailures.length} source problem(s) in the last refresh</summary>
+            {error && <p className="error">{error}</p>}
+            {notices.length > 0 && (
               <ul className="warning-list">
-                {feedFailures.map((failure, index) => (
-                  <li key={`${failure.label.name}-${index}`}>
-                    {failure.label.name}: {failure.message}
-                  </li>
+                {notices.map((notice) => (
+                  <li key={notice}>{notice}</li>
                 ))}
               </ul>
-            </details>
-          )}
-        </section>
+            )}
+            {!adhoc && feedFailures.length > 0 && (
+              <details className="failure-details">
+                <summary>{feedFailures.length} source problem(s) in the last refresh</summary>
+                <ul className="warning-list">
+                  {feedFailures.map((failure, index) => (
+                    <li key={`${failure.label.name}-${index}`}>
+                      {failure.label.name}: {failure.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </section>
+        </div>
 
         <section className="panel releases" aria-label="Releases">
           {adhoc ? (
             <div className="section-header">
               <div>
-                <h2>Direct search: {adhoc.label.name}</h2>
+                <h2>Special search: {adhoc.label.name}</h2>
                 <p>
-                  {adhoc.loading ? 'Searching…' : `${adhoc.releases.length} results`}
+                  {adhoc.range} · {adhoc.loading ? 'Searching…' : `${adhoc.releases.length} results`}
                   {adhoc.failures.length > 0 && ` · ${adhoc.failures.join(' · ')}`}
                 </p>
+                <p>Not part of your feed.</p>
               </div>
-              <button type="button" className="btn secondary" onClick={closeAdhoc}>
-                Back to feed
-              </button>
+              <div className="header-actions">
+                {!adhocInList && (
+                  <button type="button" className="btn secondary" onClick={addAdhocLabelToList} disabled={!loaded}>
+                    Add label to feed
+                  </button>
+                )}
+                <button type="button" className="btn secondary" onClick={closeAdhoc}>
+                  Back to feed
+                </button>
+              </div>
             </div>
           ) : (
             <div className="section-header">
@@ -636,7 +762,7 @@ Subpop`}
 
           {!showSkeleton && releases.length === 0 && (
             <p className="empty">
-              {adhoc ? 'No releases for this label in the selected range.' : labels.length === 0 ? 'Add labels to start your feed.' : 'No releases in this range yet.'}
+              {adhoc ? `No releases for "${adhoc.label.name}" (${adhoc.range}).` : labels.length === 0 ? 'Add labels to start your feed.' : 'No releases in this range yet.'}
             </p>
           )}
 
