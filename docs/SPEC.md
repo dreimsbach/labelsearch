@@ -551,6 +551,10 @@ Required checks:
 
 ## 11. Changelog
 
+### 2026-11-23 (Release v0.5.1)
+
+- Release `v0.5.1` (package version `0.5.1`) containing the Deezer lookup-failure fix below.
+
 ### 2026-11-23 (Deezer lookup failures)
 
 - Failed Deezer album lookups are no longer silently treated as "no release": they are retried once after the walk, and lookups that keep failing are reported as a Deezer partial failure while the albums found so far are kept (4.3 step 6, `PartialResultError`).

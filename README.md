@@ -181,6 +181,10 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 
 ## Changelog
 
+### 2026-11-23 (Release v0.5.1)
+
+- Release `v0.5.1` (package version `0.5.1`) containing the Deezer lookup-failure fix below.
+
 ### 2026-11-23 (Deezer lookup failures)
 
 - A Deezer album lookup that fails (rate limit, timeout) no longer makes a release silently disappear: it is retried once, and if it keeps failing the label is listed under the source problems of the refresh (or the special search), while everything else found is still shown.
