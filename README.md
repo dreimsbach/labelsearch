@@ -33,7 +33,7 @@ It is a single-user app without its own login: run it behind a reverse proxy wit
 
 Per label, all selected sources run in parallel:
 
-- **Deezer**: `label:"<name>"` album search (for names ending in `Records`, `Music`, `Ltd.` etc. also with the short name, because Deezer's phrase search for `Smallville Records` finds nothing when the albums are labelled `Smallville`), walked newest-ingested first (Deezer ids grow over time). Album details are checked for an exact label match (after removing words like `Records`/`Ltd.`) and the date window. The walk stops after 10 albums released more than 180 days before the window, which is usually 20-40 requests per label.
+- **Deezer**: `label:"<name>"` album search (for names ending in `Records`, `Music`, `Ltd.` etc. also with the short name, because Deezer's phrase search for `Smallville Records` finds nothing when the albums are labelled `Smallville`), walked newest-ingested first (Deezer ids grow over time). Album details are checked for an exact label match (after removing words like `Records`/`Ltd.`) and the date window. The walk stops after 10 albums released more than 180 days before the window, which is usually 20-40 requests per label. Album lookups that fail are retried once at the end; if they still fail, the label shows a Deezer source problem instead of silently missing a release.
 - **MusicBrainz**: `laid:<MBID> AND date:[from TO to]`, only exact dates in `Days` mode.
 - **Discogs**: exact label id (via MusicBrainz URL relation or exact name), label release listing filtered by year, then release details for the exact date.
 
@@ -180,6 +180,10 @@ Request/response details are documented in [docs/SPEC.md](docs/SPEC.md).
 - Server writes structured logs to console and file (`LOG_FILE_PATH`, default `logs/app.log`).
 
 ## Changelog
+
+### 2026-11-23 (Deezer lookup failures)
+
+- A Deezer album lookup that fails (rate limit, timeout) no longer makes a release silently disappear: it is retried once, and if it keeps failing the label is listed under the source problems of the refresh (or the special search), while everything else found is still shown.
 
 ### 2026-11-23 (Release v0.5.0)
 

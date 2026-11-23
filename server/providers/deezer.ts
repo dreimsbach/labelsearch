@@ -1,4 +1,5 @@
 import { DAY, HOUR, cached } from '../lib/cache.js';
+import { PartialResultError } from '../lib/errors.js';
 import { fetchJson } from '../lib/http.js';
 import { labelMatches, labelSearchTerms } from '../lib/labels.js';
 import { RateLimiter, mapPool } from '../lib/limiter.js';
@@ -140,11 +141,20 @@ export async function findLabelAlbums(
   const staleBefore = addDays(fromDate, -STALE_LOOKBACK_DAYS);
   const maxDetails = MAX_DETAILS[mode];
   const found: DeezerAlbum[] = [];
+  const failed: number[] = [];
+  let lastError: unknown;
   let staleStreak = 0;
+
+  const lookup = (id: number): Promise<DeezerAlbum | null | undefined> =>
+    getAlbum(id).catch((error: unknown) => {
+      failed.push(id);
+      lastError = error;
+      return undefined;
+    });
 
   for (let offset = 0; offset < Math.min(ids.length, maxDetails); offset += DETAIL_BATCH) {
     const batch = ids.slice(offset, offset + DETAIL_BATCH);
-    const albums = await mapPool(batch, DETAIL_BATCH, (id) => getAlbum(id).catch(() => null));
+    const albums = await mapPool(batch, DETAIL_BATCH, lookup);
 
     for (const album of albums) {
       if (!album?.releaseDate || !labelMatches(label, album.label)) {
@@ -163,6 +173,19 @@ export async function findLabelAlbums(
     if (staleStreak >= STOP_AFTER_STALE) {
       break;
     }
+  }
+
+  // Lookups that still failed after fetchJson's retries get one more try once the walk is done;
+  // a missing album must show up as a failure, not as "no release".
+  const retry = failed.splice(0);
+  for (const album of await mapPool(retry, DETAIL_BATCH, lookup)) {
+    if (album?.releaseDate && labelMatches(label, album.label) && album.releaseDate >= fromDate && album.releaseDate <= toDate) {
+      found.push(album);
+    }
+  }
+  if (failed.length > 0) {
+    const reason = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new PartialResultError(`${failed.length} album lookup(s) failed, results may be incomplete (${reason})`, found);
   }
 
   return found;

@@ -26,6 +26,7 @@ vi.mock('./lib/logger.js', () => ({
 }));
 
 import type { SearchEvent, SearchRequest } from '../shared/types.js';
+import { PartialResultError } from './lib/errors.js';
 import { HttpError } from './lib/http.js';
 import { findReleases, searchReleases } from './release-service.js';
 import { findCoverArtUrl } from './providers/coverartarchive.js';
@@ -147,6 +148,18 @@ describe('searchReleases', () => {
     expect(result.partialFailures).toHaveLength(1);
     expect(result.partialFailures[0]).toMatchObject({ source: 'musicbrainz', label: { name: 'Erased Tapes' } });
     expect(result.partialFailures[0].message).toContain('MusicBrainz rate limit');
+  });
+
+  it('keeps partial Deezer results and reports failed album lookups', async () => {
+    vi.mocked(findLabelAlbums).mockRejectedValue(new PartialResultError('1 album lookup(s) failed, results may be incomplete (timeout)', [fujitaDeezer]));
+    vi.mocked(searchReleasesByLabel).mockResolvedValue([]);
+
+    const result = await findReleases(request());
+
+    expect(result.releases.map((release) => release.title)).toEqual(['Forest of Tranquility']);
+    expect(result.partialFailures).toHaveLength(1);
+    expect(result.partialFailures[0]).toMatchObject({ source: 'deezer', label: { name: 'Erased Tapes' } });
+    expect(result.partialFailures[0].message).toContain('1 album lookup(s) failed');
   });
 
   it('resolves name-only labels on MusicBrainz by exact name and skips MB when unknown', async () => {
