@@ -13,6 +13,21 @@ export function normalizeLabelName(value: string): string {
     .trim();
 }
 
+/** Generic words at the end of a label name ("Records", "Music", "Ltd.") that providers often leave out. */
+const LABEL_SUFFIX_RE = /(?:[\s,.]+(?:records?|recordings?|music|musik|ltd|limited|inc|gmbh|llc|label)\.?)+$/i;
+const MIN_CORE_LENGTH = 3;
+
+/**
+ * Names to query a provider's phrase search with: the name itself and, if different, the name
+ * without generic suffix words. Deezer's `label:"Smallville Records"` finds nothing while its
+ * albums are labelled "Smallville"; results are filtered with `labelMatches` afterwards anyway.
+ */
+export function labelSearchTerms(name: string): string[] {
+  const full = name.trim();
+  const core = full.replace(LABEL_SUFFIX_RE, '').trim();
+  return core.length >= MIN_CORE_LENGTH && core.toLowerCase() !== full.toLowerCase() ? [full, core] : [full];
+}
+
 /**
  * Exact label check after normalization. Provider label strings can list several
  * labels ("Etoile Audio/Nonesuch"), each part is compared on its own.

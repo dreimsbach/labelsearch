@@ -70,6 +70,22 @@ describe('findLabelAlbums', () => {
     expect(detailCalls()).toBeLessThanOrEqual(20);
   });
 
+  it('also searches the name without "Records" when Deezer stores the short name', async () => {
+    // Deezer's label:"Smallville Records" returns nothing; the albums are labelled "Smallville".
+    const albums: FakeAlbum[] = [
+      { id: 1127033671, label: 'Smallville', release_date: '2026-11-20', title: 'Tumbling Cycles' },
+      { id: 1045993262, label: 'Smallville', release_date: '2026-09-04' }
+    ];
+    serve(albums);
+    const base = vi.mocked(fetchJson).getMockImplementation()!;
+    vi.mocked(fetchJson).mockImplementation(async (url: string, ...rest) =>
+      decodeURIComponent(url).includes('label:"Smallville Records"') ? { data: [], total: 0 } : base(url, ...rest)
+    );
+
+    const found = await findLabelAlbums('Smallville Records', '2026-11-17', '2026-11-23', 'days');
+    expect(found.map((album) => album.title)).toEqual(['Tumbling Cycles']);
+  });
+
   it('serves repeated searches from cache', async () => {
     serve([{ id: 1, label: 'Nonesuch', release_date: '2026-11-13' }]);
     await findLabelAlbums('Nonesuch', '2026-11-07', '2026-11-13', 'days');

@@ -10,7 +10,7 @@ Core behavior:
 2. Search releases for a configurable date window with mode selector (`Days` default `7`, or `Year`).
 3. Query the selected primary sources per label in parallel (default: Deezer + MusicBrainz, optional Discogs), merge duplicates, and enrich with iTunes (Apple links, cover, genre) and Cover Art Archive.
 4. Run this search daily in the background (default 06:00 Europe/Berlin) and on demand (`Refresh now`). Each run checks only the last N days (default 7) and adds its finds to the stored feed, which keeps releases for 90 days; releases new since the user's last visit are marked.
-5. Optionally run a one-off direct search for a single label without changing the feed.
+5. Run one-off special searches for any label (own range up to 365 days or a whole year, own sources) that never change the feed, the label list or the daily settings.
 
 Access control is not part of the app: it is meant to run behind a reverse proxy with Basic Auth (or in a private network).
 
@@ -32,7 +32,7 @@ Breakpoints:
 
 Behavior:
 
-- Desktop: two-column layout (`controls` + `results`)
+- Desktop: two-column layout (left column: `Special search` panel above the `Daily feed` controls; right: results). The left column is not sticky, because both panels together are taller than the viewport.
 - Tablet/mobile: single-column flow
 - Mobile controls remain easy to access (sticky behavior)
 
@@ -44,9 +44,9 @@ Behavior:
 - Polling uses the small `GET /api/feed/status` (every 3 s while running, every 60 s otherwise); the full feed is only reloaded when a run finished or a new snapshot exists
 - Without any snapshot yet, partial results of the running refresh are reloaded every 15 s
 - Card covers are requested at ~500–600 px (Apple `600x600bb`, Deezer `500x500`, Cover Art Archive `front-500`); stored URLs keep the large variant
-- Direct search view: results of a one-off search for one label stream in; `Back to feed` returns to the feed (and aborts a running direct search)
+- Special search view: results of a one-off search stream in; the header shows `Special search: <label>`, the range (`last N days` / year), the result count, `Not part of your feed.`, `Add label to feed` (only when the label is not in the list yet) and `Back to feed` (aborts a running special search). Empty state: `No releases for "<label>" (<range>).`
 - Loading state with skeleton cards
-- Empty states: no labels yet (`Add labels to start your feed.`), no releases in range, no releases for a direct search
+- Empty states: no labels yet (`Add labels to start your feed.`), no releases in range, no releases for a special search
 - Error state for API/provider failures; partial failures of the last refresh are listed per label and source in a collapsible section; a failed refresh shows `Last refresh failed: …` and keeps the previous snapshot
 - Progress display for label import (`Resolving labels on MusicBrainz: x / n`)
 - Collapsible instruction section explaining search workflow and import format
@@ -59,13 +59,10 @@ Behavior:
 ## 3.1 Label Input and Management
 
 - The label list lives on the server (see 7) and every change is saved immediately.
-- Direct label input field (`Enter` runs `Find label`)
+- Label input field in the `Daily feed` panel (`Enter` runs `Find label`)
 - Label lookup via MusicBrainz search endpoint (Lucene special characters such as `*` in `o*rs` are escaped)
 - Candidate selection with disambiguation context (`country`, `disambiguation`)
-- Direct-search rule:
-  - default: use first label result for current input query; if MusicBrainz knows no label, search by the typed name
-  - when user selected a lookup candidate: button changes to `Search selected label` and searches with that candidate
-- Add selected label to the list
+- Add selected label to the list (`Add to list`); there is no search button here any more, one-off searches use the special search (3.4)
 - Remove individual labels by clicking chip
 - `Clear all` removes the whole list after a confirmation
 - Import a label list from `TXT/CSV`:
@@ -83,21 +80,21 @@ Behavior:
 
 Fields:
 
-- `Check last days` (number, `1..31`, default `7`): every run (scheduled, manual, direct search) searches the last N days including today. There is no year mode in the UI; a whole-year scan is never needed because the feed accumulates results (see 4.8).
+- `Check last days` (number, `1..31`, default `7`): every feed run (scheduled, manual) searches the last N days including today. The feed has no year mode; a whole-year scan is never needed because the feed accumulates results (see 4.8). The special search has its own range (3.4).
 - `country` dropdown (default `DE`), used as iTunes storefront (fallback `US`)
 - both fields share one row (also on mobile)
 - `sources` toggle chips (multi-select, at least one required; a one-line hint below explains each source):
   - `deezer` (default on)
   - `musicbrainz` (default on)
   - `discogs` (default off)
-- Settings are saved on the server (debounced 500 ms) and used by the daily refresh and by direct searches.
+- Settings are saved on the server (debounced 500 ms) and used by the daily refresh. The special search only reads `country` from them.
 - Discogs token is server configuration only (`DISCOGS_TOKEN`); when Discogs is selected without a configured token, the source hint says so.
 
 Date window rule:
 
-- Feed and UI always use `days` mode. The API (`/api/releases/*`) still supports `year` mode:
+- The feed always uses `days` mode. The special search and the API (`/api/releases/*`) also support `year` mode:
 - For `days` mode:
-  - `toDate = today` in the schedule timezone (`SCHEDULE_TIMEZONE`) for feed runs, in the browser timezone for direct searches
+  - `toDate = today` in the schedule timezone (`SCHEDULE_TIMEZONE`) for feed runs, in the browser timezone for special searches
   - `fromDate = toDate - (rangeValue - 1)` days (calendar arithmetic in UTC, independent of server timezone)
   - inclusive range: `[fromDate, toDate]`
 - For `year` mode:
@@ -119,6 +116,18 @@ Each release card shows:
 - Apple artist icon link (`music://` desktop app deep link)
 - Optional Apple album icon link (`music://` desktop app deep link)
 - If no Apple links are available, show fallback button to copy `Artist + " " + Album title` to clipboard
+
+## 3.4 Special Search
+
+A separate panel (`Special search`) at the top of the left column for one-off searches that have nothing to do with the daily feed.
+
+- Fields: `Label` (free text, `Enter` starts the search), `Range` (`Last days` or `Whole year`), `Days (1–365)` (default `30`) or `Year` (default current year), source chips (default Deezer + MusicBrainz, at least one), `Search` button.
+- The label is searched by the typed name as a name-only label (`{ name }`). The server resolves the MusicBrainz label by normalized name (`Smallville` → `Smallville Records`), Deezer and Discogs use the typed name (Deezer also its short form, see 4.3). The first MusicBrainz hit is no longer taken over automatically.
+- Country comes from the feed settings (read only).
+- Uses `POST /api/releases/stream` (6.5). Results are only shown; they never change the label list, the feed settings, the snapshot or the first-seen history. A running feed refresh continues; both share the provider rate limiters and the cache.
+- Invalid range values show `Enter 1 to 365 days` / `Enter a year between 1900 and 2100` and start no request. Inputs are kept as raw text so a year can be typed digit by digit.
+- The form (label, range, sources) is remembered per browser in `localStorage` (`labelsearch.specialSearch`).
+- `Add label to feed` resolves the label like an import line (exact MusicBrainz name match, otherwise name-only) and adds it to the list.
 
 ## 4. Data Sources and Provider Strategy
 
@@ -169,7 +178,7 @@ Used for:
 
 Algorithm per label:
 
-1. `GET /search/album?q=label:"<name>"` (100 per page, up to 10 pages). The search is fuzzy (`Latency` also hits `Low Latency FM`).
+1. `GET /search/album?q=label:"<term>"` (100 per page, up to 10 pages) for each search term; the id lists are merged. Terms: the label name and, if it ends in generic words (`Records`, `Recordings`, `Music`, `Musik`, `Ltd`, `Limited`, `Inc`, `GmbH`, `LLC`, `Label`), the name without them when that core has at least 3 characters (`Smallville Records` → `Smallville`, `Erased Tapes Records Ltd.` → `Erased Tapes`). Deezer's phrase search needs the stored label name: `label:"Smallville Records"` returns 0 albums while they are labelled `Smallville`. The search is fuzzy (`Latency` also hits `Low Latency FM`).
 2. Sort album ids descending: Deezer ids grow with ingestion time, so the newest catalog entries come first.
 3. Fetch `/album/{id}` in batches of 10 and keep albums whose `label` matches exactly (see 5.1) and whose `release_date` lies in the window.
 4. Stop after 10 consecutive matching albums released more than 180 days before `fromDate`. The lookback is long because pre-orders are ingested months ahead (e.g. Fujita, ingested ~August for a November release).
@@ -365,9 +374,9 @@ Response:
 - `GET /api/feed/status` → `{ running, completed, total, error?, snapshotFinishedAt }` (no releases; for polling)
 - Partial results of a running run are merged only when `GET /api/feed` is requested, not on every provider event.
 
-## 6.4 Search request body (direct search)
+## 6.4 Search request body (special search)
 
-Used by both direct-search endpoints:
+Used by both special-search endpoints (they never read or write the feed state):
 
 ```json
 {
@@ -386,7 +395,7 @@ Used by both direct-search endpoints:
 - `sources`: subset of `deezer`, `musicbrainz`, `discogs`; empty/missing → default `["deezer","musicbrainz"]`
 - legacy `sourceMode` is still accepted when `sources` is missing: `hybrid` → default sources, `musicbrainz` → `["musicbrainz"]`, `discogs` → `["discogs"]`
 
-## 6.5 `POST /api/releases/stream` (direct search in the UI)
+## 6.5 `POST /api/releases/stream` (special search in the UI)
 
 Response: `application/x-ndjson`, one `SearchEvent` per line:
 
@@ -458,6 +467,7 @@ Server (source of truth):
 Browser `localStorage` (all access wrapped in try/catch):
 
 - `labelsearch.lastVisit`: timestamp of the previous visit, for `New` badges
+- `labelsearch.specialSearch`: last special search form (label, range mode, days, year, sources)
 - one-time migration: if the server has no labels yet, labels and settings from the old keys `labelsearch.labels` / `labelsearch.settings` are sent to the server; afterwards `labelsearch.migratedToServer` is set and `labelsearch.lastResults` is removed
 
 ## 8. Non-Functional Requirements
@@ -526,8 +536,8 @@ Required checks:
 
 - Typecheck: shared and server/frontend TS consistency
 - Unit tests:
-  - label matching (exact after normalization, fuzzy noise rejected)
-  - Deezer discovery: window filter, pre-order ingests, early stop, cache reuse
+  - label matching (exact after normalization, fuzzy noise rejected), label search terms (short name without generic suffixes)
+  - Deezer discovery: window filter, pre-order ingests, early stop, cache reuse, short-name search when the full name finds nothing
   - search orchestration: cross-source merge, streaming raw → enriched with stable ids, per-source failures, name-only labels, multi-label merge, Discogs year/day filtering and 429 hint
   - rate limiter spacing, `fetchJson` retry/no-retry/redaction
   - dedupe (suffixes, date drift, featured artists, reissues)
@@ -539,6 +549,13 @@ Required checks:
   - `/api/health` responds in running container
 
 ## 11. Changelog
+
+### 2026-11-23
+
+- Special search (3.4): separate panel with its own label, range (1–365 days or a whole year) and sources; never changes the feed, label list or settings; form kept in `localStorage` (`labelsearch.specialSearch`); `Add label to feed` in the result header.
+- Removed `Search directly`/`Search selected label` from the label panel. It took the first MusicBrainz hit (`Smallville` → `Smallville Records`), and Deezer then missed releases stored under the short label name.
+- Deezer searches each label with its name and its core name without generic suffix words (4.3). Found by the missed release Billus – Tumbling Cycles (Deezer label `Smallville`, 2026-11-20) for the feed label `Smallville Records`: `label:"Smallville Records"` returns 0 albums.
+- Left column (special search + daily feed panels) is no longer sticky on desktop.
 
 ### 2026-11-17 (Release v0.4.0)
 

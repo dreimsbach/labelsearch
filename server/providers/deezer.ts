@@ -1,6 +1,6 @@
 import { DAY, HOUR, cached } from '../lib/cache.js';
 import { fetchJson } from '../lib/http.js';
-import { labelMatches } from '../lib/labels.js';
+import { labelMatches, labelSearchTerms } from '../lib/labels.js';
 import { RateLimiter, mapPool } from '../lib/limiter.js';
 
 /** Deezer allows 50 requests / 5 s per IP; stay a bit below. */
@@ -134,7 +134,9 @@ export async function findLabelAlbums(
   toDate: string,
   mode: 'days' | 'year'
 ): Promise<DeezerAlbum[]> {
-  const ids = await searchAlbumIdsByLabel(label);
+  // "Smallville Records" also searches "Smallville": Deezer's label phrase search needs the stored name.
+  const idLists = await Promise.all(labelSearchTerms(label).map((term) => searchAlbumIdsByLabel(term)));
+  const ids = [...new Set(idLists.flat())].sort((a, b) => b - a);
   const staleBefore = addDays(fromDate, -STALE_LOOKBACK_DAYS);
   const maxDetails = MAX_DETAILS[mode];
   const found: DeezerAlbum[] = [];
